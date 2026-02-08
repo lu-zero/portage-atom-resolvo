@@ -75,3 +75,38 @@ cargo clippy -- -D warnings       # clean
 cargo fmt --check                 # formatted
 cargo doc --no-deps               # no warnings
 ```
+
+## Related Projects
+
+- [pkgcraft](https://github.com/pkgcraft/pkgcraft) - Full-featured Gentoo package manager library
+- [pkgcraft-atom](https://github.com/pkgcraft/pkgcraft/tree/main/crates/pkgcraft-atom) - Original atom parsing library
+- [PMS](https://projects.gentoo.org/pms/) - Package Manager Specification
+- [Portage](https://wiki.gentoo.org/wiki/Portage) - Reference Gentoo package manager
+
+## License
+
+[MIT](LICENSE-MIT)
+
+## Contributing
+
+Contributions welcome! Please ensure:
+- Tests pass (`cargo test`)
+- Code is formatted (`cargo fmt`)
+- No clippy warnings (`cargo clippy`)
+- PMS compliance is maintained
+
+### Conventional Commits
+
+This project uses [Conventional Commits](https://www.conventionalcommits.org/).
+Prefix your commit messages with a type:
+
+- `feat:` — new functionality
+- `fix:` — bug fix
+- `refactor:` — code restructuring without behaviour change
+- `docs:` — documentation only
+- `test:` — adding or updating tests
+- `chore:` — maintenance (CI, dependencies, tooling)
+
+## Author
+
+Luca Barbato <lu_zero@gentoo.org>
