@@ -1238,6 +1238,7 @@ fn bare_version(v: &Version) -> Version {
         letter: v.letter,
         suffixes: v.suffixes.clone(),
         revision: v.revision.clone(),
+        glob: v.glob,
     }
 }
 
