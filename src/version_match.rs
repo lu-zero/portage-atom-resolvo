@@ -4,6 +4,8 @@
 //! given a candidate version, an operator, and a constraint version, determine
 //! whether the candidate satisfies the constraint.
 
+use std::cmp::Ordering;
+
 use portage_atom::{Operator, Version};
 
 /// Test whether `candidate` satisfies the version constraint `op constraint`.
@@ -18,51 +20,27 @@ use portage_atom::{Operator, Version};
 /// | `>=` | candidate is greater than or equal to constraint |
 /// | `>`  | candidate is strictly greater than constraint |
 /// | `~`  | candidate has the same base version, ignoring revision |
-/// | `=*` | candidate's version string starts with constraint as a prefix |
 ///
-/// See [PMS 8.3.2](https://projects.gentoo.org/pms/latest/pms.html#x1-830008.3.2).
+/// When `constraint.glob` is `true` (i.e. the `=cat/pkg-1.2*` form), the `=`
+/// operator performs prefix matching via the [`Version`] ordering, which
+/// implements PMS 8.3.1 glob semantics.
+///
+/// See [PMS 8.3.1](https://projects.gentoo.org/pms/9/pms.html#operators).
 pub fn version_matches(candidate: &Version, op: &Operator, constraint: &Version) -> bool {
     match op {
         Operator::Less => candidate < constraint,
         Operator::LessOrEqual => candidate <= constraint,
-        Operator::Equal => candidate == constraint,
+        Operator::Equal => {
+            // When the constraint carries a glob suffix (`=cat/pkg-1.2*`),
+            // Version::cmp handles prefix matching via glob_cmp.
+            // For non-glob `=`, Ord-based equality is equivalent to structural
+            // equality on the version components (numbers, letter, suffixes,
+            // revision).
+            candidate.cmp(constraint) == Ordering::Equal
+        }
         Operator::GreaterOrEqual => candidate >= constraint,
         Operator::Greater => candidate > constraint,
         Operator::Approximate => candidate.base() == constraint.base(),
-        Operator::EqualGlob => glob_matches(candidate, constraint),
-    }
-}
-
-/// `=*` glob matching: the candidate's numeric components must start with the
-/// constraint's components as a prefix, and the candidate's letter (if the
-/// constraint specifies one) must match.
-///
-/// For example, `=dev-lang/rust-1.75*` matches `1.75.0`, `1.75.1`, `1.75`,
-/// but not `1.7` or `1.8`.
-fn glob_matches(candidate: &Version, constraint: &Version) -> bool {
-    // The constraint's numeric components must be a prefix of the candidate's.
-    if candidate.numbers.len() < constraint.numbers.len() {
-        return false;
-    }
-    for (c, p) in candidate.numbers.iter().zip(constraint.numbers.iter()) {
-        if c != p {
-            return false;
-        }
-    }
-
-    // If constraint specifies a letter, candidate must match it.
-    if let Some(cl) = constraint.letter {
-        match candidate.letter {
-            Some(l) => l == cl,
-            None => {
-                // Candidate has no letter but constraint does — only matches
-                // if candidate has more numeric components (the letter is part
-                // of the prefix, not a separate component to match).
-                false
-            }
-        }
-    } else {
-        true
     }
 }
 
@@ -217,13 +195,25 @@ mod tests {
         ));
     }
 
-    // --- EqualGlob (=*) ---
+    // --- Equal with glob (=*) ---
+    //
+    // In portage-atom 0.2, `=cat/pkg-1.75*` is represented as
+    // `Operator::Equal` with `Version { glob: true, .. }`.
+    // The glob semantics are handled by `Version::Ord::cmp` via `glob_cmp`.
+
+    /// Helper: build a glob version (as parsed from `=cat/pkg-VER*`).
+    fn vg(s: &str) -> Version {
+        let mut ver = Version::parse(s).unwrap();
+        ver.glob = true;
+        ver
+    }
+
     #[test]
     fn glob_matches_prefix() {
         assert!(version_matches(
             &v("1.75.0"),
-            &Operator::EqualGlob,
-            &v("1.75")
+            &Operator::Equal,
+            &vg("1.75")
         ));
     }
 
@@ -231,8 +221,8 @@ mod tests {
     fn glob_matches_exact() {
         assert!(version_matches(
             &v("1.75"),
-            &Operator::EqualGlob,
-            &v("1.75")
+            &Operator::Equal,
+            &vg("1.75")
         ));
     }
 
@@ -240,8 +230,8 @@ mod tests {
     fn glob_does_not_match_shorter() {
         assert!(!version_matches(
             &v("1.7"),
-            &Operator::EqualGlob,
-            &v("1.75")
+            &Operator::Equal,
+            &vg("1.75")
         ));
     }
 
@@ -249,8 +239,8 @@ mod tests {
     fn glob_does_not_match_different() {
         assert!(!version_matches(
             &v("1.76.0"),
-            &Operator::EqualGlob,
-            &v("1.75")
+            &Operator::Equal,
+            &vg("1.75")
         ));
     }
 
@@ -258,22 +248,25 @@ mod tests {
     fn glob_with_letter() {
         assert!(version_matches(
             &v("1.2.3a"),
-            &Operator::EqualGlob,
-            &v("1.2.3a")
+            &Operator::Equal,
+            &vg("1.2.3a")
         ));
         assert!(!version_matches(
             &v("1.2.3b"),
-            &Operator::EqualGlob,
-            &v("1.2.3a")
+            &Operator::Equal,
+            &vg("1.2.3a")
         ));
     }
 
     #[test]
     fn glob_without_letter_matches_any_letter() {
+        // PMS 8.3.1: "only the given number of version components is used
+        // for comparison" — the letter is not a numeric component, so
+        // `=1.2.3*` matches `1.2.3a`.
         assert!(version_matches(
             &v("1.2.3a"),
-            &Operator::EqualGlob,
-            &v("1.2.3")
+            &Operator::Equal,
+            &vg("1.2.3")
         ));
     }
 
