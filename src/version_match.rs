@@ -210,29 +210,17 @@ mod tests {
 
     #[test]
     fn glob_matches_prefix() {
-        assert!(version_matches(
-            &v("1.75.0"),
-            &Operator::Equal,
-            &vg("1.75")
-        ));
+        assert!(version_matches(&v("1.75.0"), &Operator::Equal, &vg("1.75")));
     }
 
     #[test]
     fn glob_matches_exact() {
-        assert!(version_matches(
-            &v("1.75"),
-            &Operator::Equal,
-            &vg("1.75")
-        ));
+        assert!(version_matches(&v("1.75"), &Operator::Equal, &vg("1.75")));
     }
 
     #[test]
     fn glob_does_not_match_shorter() {
-        assert!(!version_matches(
-            &v("1.7"),
-            &Operator::Equal,
-            &vg("1.75")
-        ));
+        assert!(!version_matches(&v("1.7"), &Operator::Equal, &vg("1.75")));
     }
 
     #[test]
