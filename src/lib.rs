@@ -1396,6 +1396,265 @@ mod tests {
         assert_eq!(meta.cpv, Cpv::parse("dev-lang/python-3.11.5").unwrap());
     }
 
+    // ── ExactlyOneOf (^^) and AtMostOneOf (??) tests ──────────────
+
+    #[test]
+    fn solve_exactly_one_of() {
+        // ^^ ( bar baz ) with both available → mutual exclusion ensures
+        // exactly one alternative is selected.
+        let mut repo = InMemoryRepository::new();
+        repo.add(pkg(
+            "app-misc/foo-1.0",
+            "0",
+            vec![DepEntry::ExactlyOneOf(vec![
+                DepEntry::Atom(Dep::parse("dev-lib/bar").unwrap()),
+                DepEntry::Atom(Dep::parse("dev-lib/baz").unwrap()),
+            ])],
+        ));
+        repo.add(pkg("dev-lib/bar-1.0", "0", vec![]));
+        repo.add(pkg("dev-lib/baz-1.0", "0", vec![]));
+
+        let mut provider = PortageDependencyProvider::new(&repo, &UseConfig::default());
+        let req = provider.intern_requirement(&Dep::parse("app-misc/foo").unwrap());
+        let problem = Problem::new().requirements(vec![req]);
+
+        let mut solver = Solver::new(provider);
+        let solution = solver.solve(problem).unwrap();
+
+        let cpvs: HashSet<String> = solution
+            .iter()
+            .map(|&sid| solver.provider().package_metadata(sid).cpv.to_string())
+            .collect();
+        assert!(cpvs.contains("app-misc/foo-1.0"));
+        assert!(
+            cpvs.contains("dev-lib/bar-1.0") || cpvs.contains("dev-lib/baz-1.0"),
+            "at least one alternative should be selected: {:?}",
+            cpvs
+        );
+        // Mutual exclusion: at most one should be selected.
+        assert!(
+            !(cpvs.contains("dev-lib/bar-1.0") && cpvs.contains("dev-lib/baz-1.0")),
+            "mutual exclusion violated — both bar and baz selected: {:?}",
+            cpvs
+        );
+    }
+
+    #[test]
+    fn solve_at_most_one_of_optional() {
+        // ?? ( bar baz ) with no other dep pulling them in → the "none"
+        // virtual is selected (biased first in the union), so neither
+        // bar nor baz is installed.
+        let mut repo = InMemoryRepository::new();
+        repo.add(pkg(
+            "app-misc/foo-1.0",
+            "0",
+            vec![DepEntry::AtMostOneOf(vec![
+                DepEntry::Atom(Dep::parse("dev-lib/bar").unwrap()),
+                DepEntry::Atom(Dep::parse("dev-lib/baz").unwrap()),
+            ])],
+        ));
+        repo.add(pkg("dev-lib/bar-1.0", "0", vec![]));
+        repo.add(pkg("dev-lib/baz-1.0", "0", vec![]));
+
+        let mut provider = PortageDependencyProvider::new(&repo, &UseConfig::default());
+        let req = provider.intern_requirement(&Dep::parse("app-misc/foo").unwrap());
+        let problem = Problem::new().requirements(vec![req]);
+
+        let mut solver = Solver::new(provider);
+        let solution = solver.solve(problem).unwrap();
+
+        let cpvs: HashSet<String> = solution
+            .iter()
+            .map(|&sid| solver.provider().package_metadata(sid).cpv.to_string())
+            .collect();
+        assert!(cpvs.contains("app-misc/foo-1.0"));
+        // Neither bar nor baz should be installed.
+        assert!(
+            !cpvs.contains("dev-lib/bar-1.0"),
+            "bar should not be installed: {:?}",
+            cpvs
+        );
+        assert!(
+            !cpvs.contains("dev-lib/baz-1.0"),
+            "baz should not be installed: {:?}",
+            cpvs
+        );
+    }
+
+    #[test]
+    fn solve_exactly_one_of_with_use_conditional() {
+        // ^^ ( ssl? ( openssl ) libressl ) with ssl enabled → both are
+        // candidates but mutual exclusion ensures exactly one is selected.
+        let mut repo = InMemoryRepository::new();
+        repo.add(pkg(
+            "app-misc/foo-1.0",
+            "0",
+            vec![DepEntry::ExactlyOneOf(vec![
+                DepEntry::UseConditional {
+                    flag: "ssl".into(),
+                    negate: false,
+                    children: vec![DepEntry::Atom(Dep::parse("dev-lib/openssl").unwrap())],
+                },
+                DepEntry::Atom(Dep::parse("dev-lib/libressl").unwrap()),
+            ])],
+        ));
+        repo.add(pkg("dev-lib/openssl-3.0.0", "0", vec![]));
+        repo.add(pkg("dev-lib/libressl-3.9.0", "0", vec![]));
+
+        let use_config = UseConfig::from(["ssl".to_string()].into_iter().collect::<HashSet<_>>());
+        let mut provider = PortageDependencyProvider::new(&repo, &use_config);
+        let req = provider.intern_requirement(&Dep::parse("app-misc/foo").unwrap());
+        let problem = Problem::new().requirements(vec![req]);
+
+        let mut solver = Solver::new(provider);
+        let solution = solver.solve(problem).unwrap();
+
+        let cpvs: HashSet<String> = solution
+            .iter()
+            .map(|&sid| solver.provider().package_metadata(sid).cpv.to_string())
+            .collect();
+        assert!(cpvs.contains("app-misc/foo-1.0"));
+        assert!(
+            cpvs.contains("dev-lib/openssl-3.0.0") || cpvs.contains("dev-lib/libressl-3.9.0"),
+            "at least one alternative should be selected: {:?}",
+            cpvs
+        );
+        // Mutual exclusion: at most one should be selected.
+        assert!(
+            !(cpvs.contains("dev-lib/openssl-3.0.0") && cpvs.contains("dev-lib/libressl-3.9.0")),
+            "mutual exclusion violated — both openssl and libressl selected: {:?}",
+            cpvs
+        );
+    }
+
+    #[test]
+    fn solve_exactly_one_of_excludes_second() {
+        // ^^ ( bar baz ) plus an independent dep on bar → solver picks bar
+        // (satisfies both the direct dep and the ^^ group), baz is excluded
+        // by mutual exclusion.
+        let mut repo = InMemoryRepository::new();
+        repo.add(pkg(
+            "app-misc/foo-1.0",
+            "0",
+            vec![
+                DepEntry::ExactlyOneOf(vec![
+                    DepEntry::Atom(Dep::parse("dev-lib/bar").unwrap()),
+                    DepEntry::Atom(Dep::parse("dev-lib/baz").unwrap()),
+                ]),
+                DepEntry::Atom(Dep::parse("dev-lib/bar").unwrap()),
+            ],
+        ));
+        repo.add(pkg("dev-lib/bar-1.0", "0", vec![]));
+        repo.add(pkg("dev-lib/baz-1.0", "0", vec![]));
+
+        let mut provider = PortageDependencyProvider::new(&repo, &UseConfig::default());
+        let req = provider.intern_requirement(&Dep::parse("app-misc/foo").unwrap());
+        let problem = Problem::new().requirements(vec![req]);
+
+        let mut solver = Solver::new(provider);
+        let solution = solver.solve(problem).unwrap();
+
+        let cpvs: HashSet<String> = solution
+            .iter()
+            .map(|&sid| solver.provider().package_metadata(sid).cpv.to_string())
+            .collect();
+        assert!(cpvs.contains("app-misc/foo-1.0"));
+        assert!(
+            cpvs.contains("dev-lib/bar-1.0"),
+            "bar should be selected: {:?}",
+            cpvs
+        );
+        assert!(
+            !cpvs.contains("dev-lib/baz-1.0"),
+            "baz should be excluded by mutual exclusion: {:?}",
+            cpvs
+        );
+    }
+
+    #[test]
+    fn solve_at_most_one_of_with_independent_dep() {
+        // ?? ( bar baz ) plus independent dep on bar → bar installed,
+        // baz excluded by mutual exclusion.
+        let mut repo = InMemoryRepository::new();
+        repo.add(pkg(
+            "app-misc/foo-1.0",
+            "0",
+            vec![
+                DepEntry::AtMostOneOf(vec![
+                    DepEntry::Atom(Dep::parse("dev-lib/bar").unwrap()),
+                    DepEntry::Atom(Dep::parse("dev-lib/baz").unwrap()),
+                ]),
+                DepEntry::Atom(Dep::parse("dev-lib/bar").unwrap()),
+            ],
+        ));
+        repo.add(pkg("dev-lib/bar-1.0", "0", vec![]));
+        repo.add(pkg("dev-lib/baz-1.0", "0", vec![]));
+
+        let mut provider = PortageDependencyProvider::new(&repo, &UseConfig::default());
+        let req = provider.intern_requirement(&Dep::parse("app-misc/foo").unwrap());
+        let problem = Problem::new().requirements(vec![req]);
+
+        let mut solver = Solver::new(provider);
+        let solution = solver.solve(problem).unwrap();
+
+        let cpvs: HashSet<String> = solution
+            .iter()
+            .map(|&sid| solver.provider().package_metadata(sid).cpv.to_string())
+            .collect();
+        assert!(cpvs.contains("app-misc/foo-1.0"));
+        assert!(
+            cpvs.contains("dev-lib/bar-1.0"),
+            "bar should be selected: {:?}",
+            cpvs
+        );
+        assert!(
+            !cpvs.contains("dev-lib/baz-1.0"),
+            "baz should be excluded by mutual exclusion: {:?}",
+            cpvs
+        );
+    }
+
+    #[test]
+    fn solve_exactly_one_of_three_way() {
+        // ^^ ( a b c ) → exactly one selected.
+        let mut repo = InMemoryRepository::new();
+        repo.add(pkg(
+            "app-misc/foo-1.0",
+            "0",
+            vec![DepEntry::ExactlyOneOf(vec![
+                DepEntry::Atom(Dep::parse("dev-lib/aaa").unwrap()),
+                DepEntry::Atom(Dep::parse("dev-lib/bbb").unwrap()),
+                DepEntry::Atom(Dep::parse("dev-lib/ccc").unwrap()),
+            ])],
+        ));
+        repo.add(pkg("dev-lib/aaa-1.0", "0", vec![]));
+        repo.add(pkg("dev-lib/bbb-1.0", "0", vec![]));
+        repo.add(pkg("dev-lib/ccc-1.0", "0", vec![]));
+
+        let mut provider = PortageDependencyProvider::new(&repo, &UseConfig::default());
+        let req = provider.intern_requirement(&Dep::parse("app-misc/foo").unwrap());
+        let problem = Problem::new().requirements(vec![req]);
+
+        let mut solver = Solver::new(provider);
+        let solution = solver.solve(problem).unwrap();
+
+        let cpvs: HashSet<String> = solution
+            .iter()
+            .map(|&sid| solver.provider().package_metadata(sid).cpv.to_string())
+            .collect();
+        assert!(cpvs.contains("app-misc/foo-1.0"));
+        // Exactly one of aaa, bbb, ccc should be selected.
+        let count = ["dev-lib/aaa-1.0", "dev-lib/bbb-1.0", "dev-lib/ccc-1.0"]
+            .iter()
+            .filter(|&&p| cpvs.contains(p))
+            .count();
+        assert_eq!(
+            count, 1,
+            "exactly one of aaa/bbb/ccc should be selected: {:?}",
+            cpvs
+        );
+    }
+
     #[test]
     fn locked_does_not_affect_other_slots() {
         // Locked python:3.11; req=python:3.12 → 3.12 selected freely.

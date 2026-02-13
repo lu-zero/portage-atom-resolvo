@@ -190,6 +190,16 @@ fn print_deps(indent: usize, entries: &[DepEntry]) {
                 print_deps(indent + 4, children);
                 println!("{pad})");
             }
+            DepEntry::ExactlyOneOf(children) => {
+                println!("{pad}^^ (");
+                print_deps(indent + 4, children);
+                println!("{pad})");
+            }
+            DepEntry::AtMostOneOf(children) => {
+                println!("{pad}?? (");
+                print_deps(indent + 4, children);
+                println!("{pad})");
+            }
         }
     }
 }

@@ -45,7 +45,7 @@ struct FlagVirtuals {
 /// Mutable state threaded through dependency tree conversion.
 struct ConvertContext<'a> {
     pool: &'a mut PortagePool,
-    cpn_slots: &'a HashMap<Cpn, Vec<NameId>>,
+    cpn_slots: &'a mut HashMap<Cpn, Vec<NameId>>,
     blocker_types: &'a mut HashMap<VersionSetId, Blocker>,
     rebuild_triggers: &'a mut HashSet<VersionSetId>,
     flag_virtuals: &'a HashMap<String, FlagVirtuals>,
@@ -53,6 +53,15 @@ struct ConvertContext<'a> {
     /// Solver-decided flags encountered during dep conversion of the current
     /// solvable.  Used to inject `||` choice requirements after conversion.
     encountered_flags: HashSet<String>,
+    /// Mutable access to per-name candidate lists for registering virtual
+    /// choice solvables created by `^^ ( )` / `?? ( )` groups.
+    candidates: &'a mut HashMap<NameId, Vec<SolvableId>>,
+    /// Mutable access to the dependency map for recording the
+    /// requirements and constrains of virtual choice solvables.
+    dep_map: &'a mut HashMap<SolvableId, KnownDependencies>,
+    /// Counter for generating unique virtual CPN names across all
+    /// `^^ ( )` and `?? ( )` groups processed during this provider build.
+    xof_counter: &'a mut usize,
 }
 
 /// Dependency provider bridging portage-atom types to the resolvo solver.
@@ -308,18 +317,22 @@ impl PortageDependencyProvider {
         }
 
         // Phase 2: convert dependency trees into resolvo requirements.
+        let mut xof_counter: usize = 0;
         for (sid, pkg_deps) in solvable_meta {
             let mut requirements = Vec::new();
             let mut constrains = Vec::new();
 
             let mut ctx = ConvertContext {
                 pool: &mut pool,
-                cpn_slots: &cpn_slots,
+                cpn_slots: &mut cpn_slots,
                 blocker_types: &mut blocker_types,
                 rebuild_triggers: &mut rebuild_triggers,
                 flag_virtuals: &flag_virtuals,
                 use_config,
                 encountered_flags: HashSet::new(),
+                candidates: &mut candidates,
+                dep_map: &mut dep_map,
+                xof_counter: &mut xof_counter,
             };
             for (_class, entries) in pkg_deps.iter_classes() {
                 Self::convert_deps(entries, &mut ctx, &mut requirements, &mut constrains);
@@ -336,7 +349,7 @@ impl PortageDependencyProvider {
                 }
             }
 
-            dep_map.insert(
+            ctx.dep_map.insert(
                 sid,
                 KnownDependencies {
                     requirements,
@@ -403,7 +416,174 @@ impl PortageDependencyProvider {
                 DepEntry::AnyOf(alternatives) => {
                     Self::convert_any_of(alternatives, ctx, requirements, constrains);
                 }
+                DepEntry::ExactlyOneOf(alternatives) => {
+                    Self::convert_one_of_group(alternatives, false, ctx, requirements, constrains);
+                }
+                DepEntry::AtMostOneOf(alternatives) => {
+                    Self::convert_one_of_group(alternatives, true, ctx, requirements, constrains);
+                }
             }
+        }
+    }
+
+    /// Convert a `^^ ( )` or `?? ( )` group into virtual choice solvables
+    /// with pairwise mutual exclusion.
+    ///
+    /// Each immediate child of the group becomes a *virtual choice solvable*.
+    /// The solver must select exactly one choice (for `^^`) or at most one
+    /// (for `??`).  This is enforced by:
+    ///
+    /// 1. Each choice solvable blocks every other choice via `constrains`.
+    /// 2. The dependent package requires `Union(all choices)` — the solver
+    ///    picks one.
+    ///
+    /// For `??`, an additional "none" choice with no requirements is added
+    /// (listed first in the union to bias the solver toward no selection)
+    /// so the solver can satisfy the union without installing any real
+    /// alternative.
+    ///
+    /// Each child's requirements are produced by recursively calling
+    /// [`convert_deps`] on a single-element slice, so `Atom`,
+    /// `UseConditional`, nested `|| ( )`, and even nested `^^ ( )` /
+    /// `?? ( )` are all handled.  Blockers inside children become
+    /// constrains on the virtual solvable.
+    fn convert_one_of_group(
+        alternatives: &[DepEntry],
+        allow_none: bool,
+        ctx: &mut ConvertContext<'_>,
+        requirements: &mut Vec<ConditionalRequirement>,
+        _parent_constrains: &mut Vec<VersionSetId>,
+    ) {
+        let group_id = *ctx.xof_counter;
+        *ctx.xof_counter += 1;
+
+        let version_zero = Version::parse("0").unwrap();
+
+        // (solvable_id, version_set_id, child_requirements, child_constrains)
+        let mut choices: Vec<(
+            SolvableId,
+            VersionSetId,
+            Vec<ConditionalRequirement>,
+            Vec<VersionSetId>,
+        )> = Vec::new();
+
+        // For ??, create a "none" virtual first to bias the solver toward
+        // not selecting any alternative (same pattern as NotUSE_ listed
+        // first for solver-decided flags).
+        if allow_none {
+            let cpn = Cpn::new("virtual", format!("xof_{group_id}_none"));
+            let pkg_name = PackageName {
+                cpn: cpn.clone(),
+                slot: None,
+            };
+            let name_id = ctx.pool.intern_name(pkg_name);
+            ctx.cpn_slots.entry(cpn.clone()).or_default().push(name_id);
+
+            let meta = PackageMetadata {
+                cpv: Cpv::parse(&format!("virtual/xof_{group_id}_none-1.0")).unwrap(),
+                slot: None,
+                subslot: None,
+                iuse: vec![],
+                use_flags: HashSet::new(),
+                repo: None,
+                dependencies: PackageDeps::default(),
+            };
+            let sid = ctx.pool.intern_solvable(name_id, meta);
+            ctx.candidates.entry(name_id).or_default().push(sid);
+
+            let constraint = VersionConstraint {
+                cpn,
+                operator: Operator::GreaterOrEqual,
+                version: version_zero.clone(),
+                slot: None,
+                subslot: None,
+                repo: None,
+                use_constraints: vec![],
+                inverted: false,
+            };
+            let vs_id = ctx.pool.intern_version_set(name_id, constraint);
+
+            choices.push((sid, vs_id, Vec::new(), Vec::new()));
+        }
+
+        // Create one virtual choice solvable per real alternative.
+        for (i, alt) in alternatives.iter().enumerate() {
+            let cpn = Cpn::new("virtual", format!("xof_{group_id}_{i}"));
+            let pkg_name = PackageName {
+                cpn: cpn.clone(),
+                slot: None,
+            };
+            let name_id = ctx.pool.intern_name(pkg_name);
+            ctx.cpn_slots.entry(cpn.clone()).or_default().push(name_id);
+
+            let meta = PackageMetadata {
+                cpv: Cpv::parse(&format!("virtual/xof_{group_id}_{i}-1.0")).unwrap(),
+                slot: None,
+                subslot: None,
+                iuse: vec![],
+                use_flags: HashSet::new(),
+                repo: None,
+                dependencies: PackageDeps::default(),
+            };
+            let sid = ctx.pool.intern_solvable(name_id, meta);
+            ctx.candidates.entry(name_id).or_default().push(sid);
+
+            let constraint = VersionConstraint {
+                cpn,
+                operator: Operator::GreaterOrEqual,
+                version: version_zero.clone(),
+                slot: None,
+                subslot: None,
+                repo: None,
+                use_constraints: vec![],
+                inverted: false,
+            };
+            let vs_id = ctx.pool.intern_version_set(name_id, constraint);
+
+            // Convert the child entry's deps by recursing into convert_deps.
+            let mut child_reqs = Vec::new();
+            let mut child_constrains = Vec::new();
+            Self::convert_deps(
+                std::slice::from_ref(alt),
+                ctx,
+                &mut child_reqs,
+                &mut child_constrains,
+            );
+
+            choices.push((sid, vs_id, child_reqs, child_constrains));
+        }
+
+        // Wire pairwise exclusion: each choice blocks every other choice.
+        let all_vs_ids: Vec<VersionSetId> = choices.iter().map(|(_, vs_id, _, _)| *vs_id).collect();
+
+        for (i, (sid, _, child_reqs, child_constrains)) in choices.into_iter().enumerate() {
+            let mut constrains_for_choice = child_constrains;
+            for (j, &vs_id) in all_vs_ids.iter().enumerate() {
+                if i != j {
+                    constrains_for_choice.push(vs_id);
+                }
+            }
+            ctx.dep_map.insert(
+                sid,
+                KnownDependencies {
+                    requirements: child_reqs,
+                    constrains: constrains_for_choice,
+                },
+            );
+        }
+
+        // Push the union requirement to the parent.
+        if all_vs_ids.len() == 1 {
+            requirements.push(ConditionalRequirement {
+                condition: None,
+                requirement: Requirement::Single(all_vs_ids[0]),
+            });
+        } else {
+            let union_id = ctx.pool.intern_version_set_union(all_vs_ids);
+            requirements.push(ConditionalRequirement {
+                condition: None,
+                requirement: Requirement::Union(union_id),
+            });
         }
     }
 
@@ -677,6 +857,12 @@ impl PortageDependencyProvider {
                 DepEntry::AnyOf(nested) => {
                     Self::convert_any_of(nested, ctx, requirements, constrains);
                 }
+                DepEntry::ExactlyOneOf(nested) => {
+                    Self::convert_one_of_group(nested, false, ctx, requirements, constrains);
+                }
+                DepEntry::AtMostOneOf(nested) => {
+                    Self::convert_one_of_group(nested, true, ctx, requirements, constrains);
+                }
             }
         }
 
@@ -892,9 +1078,12 @@ impl PortageDependencyProvider {
                         self.collect_dep_edges(from, class, children, solution, edges);
                     }
                 }
-                DepEntry::AnyOf(alternatives) => {
-                    // For any-of groups, emit edges for whichever alternatives
-                    // actually matched something in the solution.
+                DepEntry::AnyOf(alternatives)
+                | DepEntry::ExactlyOneOf(alternatives)
+                | DepEntry::AtMostOneOf(alternatives) => {
+                    // For any-of / exactly-one-of / at-most-one-of groups,
+                    // emit edges for whichever alternatives actually matched
+                    // something in the solution.
                     self.collect_dep_edges(from, class, alternatives, solution, edges);
                 }
             }
