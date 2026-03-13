@@ -33,10 +33,7 @@ impl InMemoryRepository {
 
     /// Add a package version to the repository.
     pub fn add(&mut self, meta: PackageMetadata) {
-        self.packages
-            .entry(meta.cpv.cpn.clone())
-            .or_default()
-            .push(meta);
+        self.packages.entry(meta.cpv.cpn).or_default().push(meta);
     }
 }
 
