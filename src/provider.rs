@@ -141,13 +141,13 @@ impl PortageDependencyProvider {
         for cpn in repo.all_packages() {
             for meta in repo.versions_for(&cpn) {
                 let pkg_name = PackageName {
-                    cpn: meta.cpv.cpn.clone(),
+                    cpn: meta.cpv.cpn,
                     slot: meta.slot.clone(),
                 };
                 let name_id = pool.intern_name(pkg_name);
 
                 // Track all slotted NameIds per CPN.
-                let slot_list = cpn_slots.entry(meta.cpv.cpn.clone()).or_default();
+                let slot_list = cpn_slots.entry(meta.cpv.cpn).or_default();
                 if !slot_list.contains(&name_id) {
                     slot_list.push(name_id);
                 }
@@ -178,12 +178,12 @@ impl PortageDependencyProvider {
                 continue;
             }
             let pkg_name = PackageName {
-                cpn: meta.cpv.cpn.clone(),
+                cpn: meta.cpv.cpn,
                 slot: meta.slot.clone(),
             };
             let name_id = pool.intern_name(pkg_name);
 
-            let slot_list = cpn_slots.entry(meta.cpv.cpn.clone()).or_default();
+            let slot_list = cpn_slots.entry(meta.cpv.cpn).or_default();
             if !slot_list.contains(&name_id) {
                 slot_list.push(name_id);
             }
@@ -215,12 +215,12 @@ impl PortageDependencyProvider {
             // --- ON virtual: virtual/USE_<flag>-1.0 ---
             let on_cpn = Cpn::new("virtual", format!("USE_{flag}"));
             let on_name = PackageName {
-                cpn: on_cpn.clone(),
+                cpn: on_cpn,
                 slot: None,
             };
             let on_name_id = pool.intern_name(on_name);
             cpn_slots
-                .entry(on_cpn.clone())
+                .entry(on_cpn)
                 .or_default()
                 .push(on_name_id);
 
@@ -252,12 +252,12 @@ impl PortageDependencyProvider {
             // --- OFF virtual: virtual/NotUSE_<flag>-1.0 ---
             let off_cpn = Cpn::new("virtual", format!("NotUSE_{flag}"));
             let off_name = PackageName {
-                cpn: off_cpn.clone(),
+                cpn: off_cpn,
                 slot: None,
             };
             let off_name_id = pool.intern_name(off_name);
             cpn_slots
-                .entry(off_cpn.clone())
+                .entry(off_cpn)
                 .or_default()
                 .push(off_name_id);
 
@@ -473,11 +473,11 @@ impl PortageDependencyProvider {
         if allow_none {
             let cpn = Cpn::new("virtual", format!("xof_{group_id}_none"));
             let pkg_name = PackageName {
-                cpn: cpn.clone(),
+                cpn,
                 slot: None,
             };
             let name_id = ctx.pool.intern_name(pkg_name);
-            ctx.cpn_slots.entry(cpn.clone()).or_default().push(name_id);
+            ctx.cpn_slots.entry(cpn).or_default().push(name_id);
 
             let meta = PackageMetadata {
                 cpv: Cpv::parse(&format!("virtual/xof_{group_id}_none-1.0")).unwrap(),
@@ -510,11 +510,11 @@ impl PortageDependencyProvider {
         for (i, alt) in alternatives.iter().enumerate() {
             let cpn = Cpn::new("virtual", format!("xof_{group_id}_{i}"));
             let pkg_name = PackageName {
-                cpn: cpn.clone(),
+                cpn,
                 slot: None,
             };
             let name_id = ctx.pool.intern_name(pkg_name);
-            ctx.cpn_slots.entry(cpn.clone()).or_default().push(name_id);
+            ctx.cpn_slots.entry(cpn).or_default().push(name_id);
 
             let meta = PackageMetadata {
                 cpv: Cpv::parse(&format!("virtual/xof_{group_id}_{i}-1.0")).unwrap(),
@@ -625,12 +625,12 @@ impl PortageDependencyProvider {
         if let Some(ref slot_val) = slot {
             // Slotted dep — targets a single NameId.
             let pkg_name = PackageName {
-                cpn: dep.cpn.clone(),
+                cpn: dep.cpn,
                 slot: Some(slot_val.clone()),
             };
             let name_id = ctx.pool.intern_name(pkg_name);
             let constraint = VersionConstraint {
-                cpn: dep.cpn.clone(),
+                cpn: dep.cpn,
                 operator: op,
                 version,
                 slot: Some(slot_val.clone()),
@@ -658,7 +658,7 @@ impl PortageDependencyProvider {
                 Some(names) if names.len() == 1 => {
                     let name_id = names[0];
                     let constraint = VersionConstraint {
-                        cpn: dep.cpn.clone(),
+                        cpn: dep.cpn,
                         operator: op,
                         version,
                         slot: None,
@@ -684,7 +684,7 @@ impl PortageDependencyProvider {
                         .iter()
                         .map(|&name_id| {
                             let constraint = VersionConstraint {
-                                cpn: dep.cpn.clone(),
+                                cpn: dep.cpn,
                                 operator: op,
                                 version: version.clone(),
                                 slot: None,
@@ -722,12 +722,12 @@ impl PortageDependencyProvider {
                     // Package not in the repository — create a name so the
                     // solver can report the unsatisfied dependency.
                     let pkg_name = PackageName {
-                        cpn: dep.cpn.clone(),
+                        cpn: dep.cpn,
                         slot: None,
                     };
                     let name_id = ctx.pool.intern_name(pkg_name);
                     let constraint = VersionConstraint {
-                        cpn: dep.cpn.clone(),
+                        cpn: dep.cpn,
                         operator: op,
                         version,
                         slot: None,
@@ -775,12 +775,12 @@ impl PortageDependencyProvider {
 
                     if let Some(ref slot_val) = slot {
                         let pkg_name = PackageName {
-                            cpn: dep.cpn.clone(),
+                            cpn: dep.cpn,
                             slot: Some(slot_val.clone()),
                         };
                         let name_id = ctx.pool.intern_name(pkg_name);
                         let constraint = VersionConstraint {
-                            cpn: dep.cpn.clone(),
+                            cpn: dep.cpn,
                             operator: op,
                             version,
                             slot: Some(slot_val.clone()),
@@ -795,7 +795,7 @@ impl PortageDependencyProvider {
                         if let Some(names) = ctx.cpn_slots.get(&dep.cpn) {
                             for &name_id in names {
                                 let constraint = VersionConstraint {
-                                    cpn: dep.cpn.clone(),
+                                    cpn: dep.cpn,
                                     operator: op,
                                     version: version.clone(),
                                     slot: None,
@@ -808,12 +808,12 @@ impl PortageDependencyProvider {
                             }
                         } else {
                             let pkg_name = PackageName {
-                                cpn: dep.cpn.clone(),
+                                cpn: dep.cpn,
                                 slot: None,
                             };
                             let name_id = ctx.pool.intern_name(pkg_name);
                             let constraint = VersionConstraint {
-                                cpn: dep.cpn.clone(),
+                                cpn: dep.cpn,
                                 operator: op,
                                 version,
                                 slot: None,
@@ -893,12 +893,12 @@ impl PortageDependencyProvider {
         if let Some(ref slot_val) = slot {
             // Slotted — single NameId.
             let pkg_name = PackageName {
-                cpn: dep.cpn.clone(),
+                cpn: dep.cpn,
                 slot: Some(slot_val.clone()),
             };
             let name_id = self.pool.intern_name(pkg_name);
             let constraint = VersionConstraint {
-                cpn: dep.cpn.clone(),
+                cpn: dep.cpn,
                 operator: op,
                 version,
                 slot: Some(slot_val.clone()),
@@ -920,7 +920,7 @@ impl PortageDependencyProvider {
                 Some(names) if names.len() == 1 => {
                     let name_id = names[0];
                     let constraint = VersionConstraint {
-                        cpn: dep.cpn.clone(),
+                        cpn: dep.cpn,
                         operator: op,
                         version,
                         slot: None,
@@ -940,7 +940,7 @@ impl PortageDependencyProvider {
                         .iter()
                         .map(|&name_id| {
                             let constraint = VersionConstraint {
-                                cpn: dep.cpn.clone(),
+                                cpn: dep.cpn,
                                 operator: op,
                                 version: version.clone(),
                                 slot: None,
@@ -960,12 +960,12 @@ impl PortageDependencyProvider {
                 }
                 None => {
                     let pkg_name = PackageName {
-                        cpn: dep.cpn.clone(),
+                        cpn: dep.cpn,
                         slot: None,
                     };
                     let name_id = self.pool.intern_name(pkg_name);
                     let constraint = VersionConstraint {
-                        cpn: dep.cpn.clone(),
+                        cpn: dep.cpn,
                         operator: op,
                         version,
                         slot: None,
@@ -1132,7 +1132,7 @@ impl PortageDependencyProvider {
         // Kahn's algorithm.
         let mut queue: std::collections::VecDeque<SolvableId> = in_degree
             .iter()
-            .filter(|(_, &deg)| deg == 0)
+            .filter(|(_, deg)| **deg == 0)
             .map(|(&sid, _)| sid)
             .collect();
 

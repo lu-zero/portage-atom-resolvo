@@ -1,13 +1,20 @@
 [package]
 name = "portage-atom-resolvo"
-version = "0.2.0"
-edition = "2021"
-rust-version = "1.85.1"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.85"
 authors = ["Luca Barbato <lu_zero@gentoo.org>"]
 license = "MIT"
 description = "Bridge between portage-atom and the resolvo dependency solver"
 repository = "https://github.com/lu-zero/portage-atom"
 
 [dependencies]
-portage-atom = "0.3.0"
+portage-atom = "0.4.0"
 resolvo = "0.10.2"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "parsing"
+harness = false
