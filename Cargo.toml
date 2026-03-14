@@ -9,7 +9,7 @@ description = "Bridge between portage-atom and the resolvo dependency solver"
 repository = "https://github.com/lu-zero/portage-atom"
 
 [dependencies]
-portage-atom = "0.4.0"
+portage-atom = "0.5.0"
 resolvo = "0.10.2"
 
 [dev-dependencies]

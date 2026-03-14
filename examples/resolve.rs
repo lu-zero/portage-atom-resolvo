@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use portage_atom::{Cpv, Dep};
 use portage_atom_resolvo::{
     DepEntry, InMemoryRepository, PackageDeps, PackageMetadata, PortageDependencyProvider,
-    UseConfig,
+    UseConfig, gentoo_interner,
 };
 use resolvo::{ArenaId, Problem, Solver, VersionSetId};
 
@@ -392,7 +392,7 @@ fn main() {
     let flags_on = UseConfig::from(
         ["ssl", "xml"]
             .iter()
-            .map(|s| s.to_string())
+            .map(|s| gentoo_interner::Interned::intern(*s))
             .collect::<HashSet<_>>(),
     );
     println!(
@@ -406,7 +406,7 @@ fn main() {
     let flags_no_ssl = UseConfig::from(
         ["xml"]
             .iter()
-            .map(|s| s.to_string())
+            .map(|s| gentoo_interner::Interned::intern(*s))
             .collect::<HashSet<_>>(),
     );
     println!(
@@ -426,8 +426,14 @@ fn main() {
 
     // ── Solve with xml enabled, ssl solver-decided ──────────────────
     let flags_solver = UseConfig {
-        enabled: ["xml"].iter().map(|s| s.to_string()).collect(),
-        solver_decided: ["ssl"].iter().map(|s| s.to_string()).collect(),
+        enabled: ["xml"]
+            .iter()
+            .map(|s| gentoo_interner::Interned::intern(*s))
+            .collect(),
+        solver_decided: ["ssl"]
+            .iter()
+            .map(|s| gentoo_interner::Interned::intern(*s))
+            .collect(),
         ..UseConfig::default()
     };
     println!(

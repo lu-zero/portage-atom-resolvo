@@ -14,6 +14,7 @@ pub use pool::{
     PortagePool, UseConfig, VersionConstraint,
 };
 pub use portage_atom::DepEntry;
+pub use portage_atom::gentoo_interner;
 pub use provider::PortageDependencyProvider;
 pub use repository::{InMemoryRepository, PackageRepository};
 pub use version_match::version_matches;
@@ -22,6 +23,7 @@ pub use version_match::version_matches;
 mod tests {
     use std::collections::HashSet;
 
+    use crate::gentoo_interner::Interned;
     use portage_atom::{Blocker, Cpv, Dep};
     use resolvo::{ArenaId, Problem, Solver, VersionSetId};
 
@@ -35,7 +37,7 @@ mod tests {
     fn pkg(cpv: &str, slot: &str, deps: Vec<DepEntry>) -> PackageMetadata {
         PackageMetadata {
             cpv: Cpv::parse(cpv).unwrap(),
-            slot: Some(slot.into()),
+            slot: Some(Interned::intern(slot)),
             subslot: None,
             iuse: vec![],
             use_flags: HashSet::new(),
@@ -165,7 +167,12 @@ mod tests {
         ));
         repo.add(pkg("dev-lib/openssl-3.0.0", "0", vec![]));
 
-        let use_config = UseConfig::from(["ssl".to_string()].into_iter().collect::<HashSet<_>>());
+        let use_config = UseConfig::from(
+            ["ssl"]
+                .into_iter()
+                .map(Interned::intern)
+                .collect::<HashSet<_>>(),
+        );
         let mut provider = PortageDependencyProvider::new(&repo, &use_config);
         let req = provider.intern_requirement(&Dep::parse("app-misc/foo").unwrap());
         let problem = Problem::new().requirements(vec![req]);
@@ -447,7 +454,7 @@ mod tests {
         repo.add(pkg("dev-lib/openssl-3.0.0", "0", vec![]));
 
         let use_config = UseConfig {
-            solver_decided: ["ssl".to_string()].into_iter().collect(),
+            solver_decided: ["ssl"].into_iter().map(|s| Interned::intern(s)).collect(),
             ..UseConfig::default()
         };
         let mut provider = PortageDependencyProvider::new(&repo, &use_config);
@@ -489,7 +496,7 @@ mod tests {
         repo.add(pkg("dev-lib/libressl-3.9.0", "0", vec![]));
 
         let use_config = UseConfig {
-            solver_decided: ["ssl".to_string()].into_iter().collect(),
+            solver_decided: ["ssl"].into_iter().map(|s| Interned::intern(s)).collect(),
             ..UseConfig::default()
         };
         let mut provider = PortageDependencyProvider::new(&repo, &use_config);
@@ -548,7 +555,7 @@ mod tests {
         repo.add(pkg("dev-lib/libressl-3.9.0", "0", vec![]));
 
         let use_config = UseConfig {
-            solver_decided: ["ssl".to_string()].into_iter().collect(),
+            solver_decided: ["ssl"].into_iter().map(|s| Interned::intern(s)).collect(),
             ..UseConfig::default()
         };
         let mut provider = PortageDependencyProvider::new(&repo, &use_config);
@@ -619,7 +626,7 @@ mod tests {
         ));
 
         let use_config = UseConfig {
-            solver_decided: ["ssl".to_string()].into_iter().collect(),
+            solver_decided: ["ssl"].into_iter().map(|s| Interned::intern(s)).collect(),
             ..UseConfig::default()
         };
         let mut provider = PortageDependencyProvider::new(&repo, &use_config);
@@ -670,7 +677,7 @@ mod tests {
         repo.add(pkg("dev-lib/bar-1.0", "0", vec![]));
 
         let use_config = UseConfig {
-            solver_decided: ["ssl".to_string()].into_iter().collect(),
+            solver_decided: ["ssl"].into_iter().map(|s| Interned::intern(s)).collect(),
             ..UseConfig::default()
         };
         let mut provider = PortageDependencyProvider::new(&repo, &use_config);
@@ -945,7 +952,12 @@ mod tests {
             dependencies: PackageDeps::default(),
         });
 
-        let use_config = UseConfig::from(["ssl".into()].into_iter().collect::<HashSet<_>>());
+        let use_config = UseConfig::from(
+            ["ssl"]
+                .into_iter()
+                .map(Interned::intern)
+                .collect::<HashSet<_>>(),
+        );
         let mut provider = PortageDependencyProvider::new(&repo, &use_config);
         let req = provider.intern_requirement(&Dep::parse("app-misc/foo").unwrap());
         let problem = Problem::new().requirements(vec![req]);
@@ -1501,7 +1513,12 @@ mod tests {
         repo.add(pkg("dev-lib/openssl-3.0.0", "0", vec![]));
         repo.add(pkg("dev-lib/libressl-3.9.0", "0", vec![]));
 
-        let use_config = UseConfig::from(["ssl".to_string()].into_iter().collect::<HashSet<_>>());
+        let use_config = UseConfig::from(
+            ["ssl"]
+                .into_iter()
+                .map(Interned::intern)
+                .collect::<HashSet<_>>(),
+        );
         let mut provider = PortageDependencyProvider::new(&repo, &use_config);
         let req = provider.intern_requirement(&Dep::parse("app-misc/foo").unwrap());
         let problem = Problem::new().requirements(vec![req]);

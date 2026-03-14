@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use portage_atom::gentoo_interner::{DefaultInterner, Interned};
 use portage_atom::{
     Blocker, Cpn, Cpv, Dep, DepEntry, Operator, SlotDep, SlotOperator, UseDepKind, Version,
 };
@@ -48,19 +49,11 @@ struct ConvertContext<'a> {
     cpn_slots: &'a mut HashMap<Cpn, Vec<NameId>>,
     blocker_types: &'a mut HashMap<VersionSetId, Blocker>,
     rebuild_triggers: &'a mut HashSet<VersionSetId>,
-    flag_virtuals: &'a HashMap<String, FlagVirtuals>,
+    flag_virtuals: &'a HashMap<Interned<DefaultInterner>, FlagVirtuals>,
     use_config: &'a UseConfig,
-    /// Solver-decided flags encountered during dep conversion of the current
-    /// solvable.  Used to inject `||` choice requirements after conversion.
-    encountered_flags: HashSet<String>,
-    /// Mutable access to per-name candidate lists for registering virtual
-    /// choice solvables created by `^^ ( )` / `?? ( )` groups.
+    encountered_flags: HashSet<Interned<DefaultInterner>>,
     candidates: &'a mut HashMap<NameId, Vec<SolvableId>>,
-    /// Mutable access to the dependency map for recording the
-    /// requirements and constrains of virtual choice solvables.
     dep_map: &'a mut HashMap<SolvableId, KnownDependencies>,
-    /// Counter for generating unique virtual CPN names across all
-    /// `^^ ( )` and `?? ( )` groups processed during this provider build.
     xof_counter: &'a mut usize,
 }
 
@@ -85,9 +78,7 @@ pub struct PortageDependencyProvider {
     /// When the dependency's slot or sub-slot changes, the dependent
     /// package must be rebuilt.
     rebuild_triggers: HashSet<VersionSetId>,
-    /// Virtual-package data for each solver-decided USE flag.
-    flag_virtuals: HashMap<String, FlagVirtuals>,
-    /// USE configuration (retained for resolving USE deps in `intern_requirement`).
+    flag_virtuals: HashMap<Interned<DefaultInterner>, FlagVirtuals>,
     use_config: UseConfig,
     /// SolvableId to favor per NameId (installed, soft preference).
     favored: HashMap<NameId, SolvableId>,
@@ -142,7 +133,7 @@ impl PortageDependencyProvider {
             for meta in repo.versions_for(&cpn) {
                 let pkg_name = PackageName {
                     cpn: meta.cpv.cpn,
-                    slot: meta.slot.clone(),
+                    slot: meta.slot,
                 };
                 let name_id = pool.intern_name(pkg_name);
 
@@ -179,7 +170,7 @@ impl PortageDependencyProvider {
             }
             let pkg_name = PackageName {
                 cpn: meta.cpv.cpn,
-                slot: meta.slot.clone(),
+                slot: meta.slot,
             };
             let name_id = pool.intern_name(pkg_name);
 
@@ -208,7 +199,7 @@ impl PortageDependencyProvider {
         // For each flag we create two virtual packages that mutually exclude
         // each other.  Selecting `virtual/USE_<flag>` means the flag is ON;
         // selecting `virtual/NotUSE_<flag>` means the flag is OFF.
-        let mut flag_virtuals: HashMap<String, FlagVirtuals> = HashMap::new();
+        let mut flag_virtuals: HashMap<Interned<DefaultInterner>, FlagVirtuals> = HashMap::new();
         let version_zero = Version::parse("0").unwrap();
 
         for flag in &use_config.solver_decided {
@@ -219,10 +210,7 @@ impl PortageDependencyProvider {
                 slot: None,
             };
             let on_name_id = pool.intern_name(on_name);
-            cpn_slots
-                .entry(on_cpn)
-                .or_default()
-                .push(on_name_id);
+            cpn_slots.entry(on_cpn).or_default().push(on_name_id);
 
             let on_meta = PackageMetadata {
                 cpv: Cpv::parse(&format!("virtual/USE_{flag}-1.0")).unwrap(),
@@ -256,10 +244,7 @@ impl PortageDependencyProvider {
                 slot: None,
             };
             let off_name_id = pool.intern_name(off_name);
-            cpn_slots
-                .entry(off_cpn)
-                .or_default()
-                .push(off_name_id);
+            cpn_slots.entry(off_cpn).or_default().push(off_name_id);
 
             let off_meta = PackageMetadata {
                 cpv: Cpv::parse(&format!("virtual/NotUSE_{flag}-1.0")).unwrap(),
@@ -307,7 +292,7 @@ impl PortageDependencyProvider {
             let choice_union = pool.intern_version_set_union(vec![off_vs, on_vs]);
 
             flag_virtuals.insert(
-                flag.clone(),
+                *flag,
                 FlagVirtuals {
                     on_condition: on_cond,
                     off_condition: off_cond,
@@ -341,7 +326,7 @@ impl PortageDependencyProvider {
             // Inject choice requirements for each solver-decided flag
             // referenced by this solvable's dependency tree.
             for flag in &ctx.encountered_flags {
-                if let Some(fv) = ctx.flag_virtuals.get(flag.as_str()) {
+                if let Some(fv) = ctx.flag_virtuals.get(flag) {
                     requirements.push(ConditionalRequirement {
                         condition: None,
                         requirement: Requirement::Union(fv.choice_union),
@@ -390,9 +375,9 @@ impl PortageDependencyProvider {
                     negate,
                     children,
                 } => {
-                    if let Some(fv) = ctx.flag_virtuals.get(flag.as_str()) {
+                    if let Some(fv) = ctx.flag_virtuals.get(flag) {
                         // Solver-decided flag — attach the appropriate condition.
-                        ctx.encountered_flags.insert(flag.clone());
+                        ctx.encountered_flags.insert(*flag);
                         let cond_id = if *negate {
                             fv.off_condition
                         } else {
@@ -472,10 +457,7 @@ impl PortageDependencyProvider {
         // first for solver-decided flags).
         if allow_none {
             let cpn = Cpn::new("virtual", format!("xof_{group_id}_none"));
-            let pkg_name = PackageName {
-                cpn,
-                slot: None,
-            };
+            let pkg_name = PackageName { cpn, slot: None };
             let name_id = ctx.pool.intern_name(pkg_name);
             ctx.cpn_slots.entry(cpn).or_default().push(name_id);
 
@@ -509,10 +491,7 @@ impl PortageDependencyProvider {
         // Create one virtual choice solvable per real alternative.
         for (i, alt) in alternatives.iter().enumerate() {
             let cpn = Cpn::new("virtual", format!("xof_{group_id}_{i}"));
-            let pkg_name = PackageName {
-                cpn,
-                slot: None,
-            };
+            let pkg_name = PackageName { cpn, slot: None };
             let name_id = ctx.pool.intern_name(pkg_name);
             ctx.cpn_slots.entry(cpn).or_default().push(name_id);
 
@@ -600,7 +579,7 @@ impl PortageDependencyProvider {
         constrains: &mut Vec<VersionSetId>,
     ) {
         let (slot, subslot) = extract_slot(dep);
-        let repo = dep.repo.clone();
+        let repo = dep.repo;
         let use_constraints = resolve_use_deps(dep, ctx.use_config);
         let blocker = dep.blocker;
         let is_blocker = blocker.is_some();
@@ -626,16 +605,16 @@ impl PortageDependencyProvider {
             // Slotted dep — targets a single NameId.
             let pkg_name = PackageName {
                 cpn: dep.cpn,
-                slot: Some(slot_val.clone()),
+                slot: Some(*slot_val),
             };
             let name_id = ctx.pool.intern_name(pkg_name);
             let constraint = VersionConstraint {
                 cpn: dep.cpn,
                 operator: op,
                 version,
-                slot: Some(slot_val.clone()),
-                subslot: subslot.clone(),
-                repo: repo.clone(),
+                slot: Some(*slot_val),
+                subslot,
+                repo,
                 use_constraints: use_constraints.clone(),
                 inverted: is_blocker,
             };
@@ -663,7 +642,7 @@ impl PortageDependencyProvider {
                         version,
                         slot: None,
                         subslot: None,
-                        repo: repo.clone(),
+                        repo,
                         use_constraints: use_constraints.clone(),
                         inverted: is_blocker,
                     };
@@ -689,7 +668,7 @@ impl PortageDependencyProvider {
                                 version: version.clone(),
                                 slot: None,
                                 subslot: None,
-                                repo: repo.clone(),
+                                repo,
                                 use_constraints: use_constraints.clone(),
                                 inverted: is_blocker,
                             };
@@ -732,7 +711,7 @@ impl PortageDependencyProvider {
                         version,
                         slot: None,
                         subslot: None,
-                        repo: repo.clone(),
+                        repo,
                         use_constraints: use_constraints.clone(),
                         inverted: is_blocker,
                     };
@@ -776,16 +755,16 @@ impl PortageDependencyProvider {
                     if let Some(ref slot_val) = slot {
                         let pkg_name = PackageName {
                             cpn: dep.cpn,
-                            slot: Some(slot_val.clone()),
+                            slot: Some(*slot_val),
                         };
                         let name_id = ctx.pool.intern_name(pkg_name);
                         let constraint = VersionConstraint {
                             cpn: dep.cpn,
                             operator: op,
                             version,
-                            slot: Some(slot_val.clone()),
+                            slot: Some(*slot_val),
                             subslot,
-                            repo: dep.repo.clone(),
+                            repo: dep.repo,
                             use_constraints,
                             inverted: false,
                         };
@@ -800,7 +779,7 @@ impl PortageDependencyProvider {
                                     version: version.clone(),
                                     slot: None,
                                     subslot: None,
-                                    repo: dep.repo.clone(),
+                                    repo: dep.repo,
                                     use_constraints: use_constraints.clone(),
                                     inverted: false,
                                 };
@@ -818,7 +797,7 @@ impl PortageDependencyProvider {
                                 version,
                                 slot: None,
                                 subslot: None,
-                                repo: dep.repo.clone(),
+                                repo: dep.repo,
                                 use_constraints,
                                 inverted: false,
                             };
@@ -831,9 +810,9 @@ impl PortageDependencyProvider {
                     negate,
                     children,
                 } => {
-                    if let Some(fv) = ctx.flag_virtuals.get(flag.as_str()) {
+                    if let Some(fv) = ctx.flag_virtuals.get(flag) {
                         // Solver-decided flag inside || ( ).
-                        ctx.encountered_flags.insert(flag.clone());
+                        ctx.encountered_flags.insert(*flag);
                         let cond_id = if *negate {
                             fv.off_condition
                         } else {
@@ -894,16 +873,16 @@ impl PortageDependencyProvider {
             // Slotted — single NameId.
             let pkg_name = PackageName {
                 cpn: dep.cpn,
-                slot: Some(slot_val.clone()),
+                slot: Some(*slot_val),
             };
             let name_id = self.pool.intern_name(pkg_name);
             let constraint = VersionConstraint {
                 cpn: dep.cpn,
                 operator: op,
                 version,
-                slot: Some(slot_val.clone()),
+                slot: Some(*slot_val),
                 subslot,
-                repo: dep.repo.clone(),
+                repo: dep.repo,
                 use_constraints: use_constraints.clone(),
                 inverted: false,
             };
@@ -925,7 +904,7 @@ impl PortageDependencyProvider {
                         version,
                         slot: None,
                         subslot: None,
-                        repo: dep.repo.clone(),
+                        repo: dep.repo,
                         use_constraints: use_constraints.clone(),
                         inverted: false,
                     };
@@ -945,7 +924,7 @@ impl PortageDependencyProvider {
                                 version: version.clone(),
                                 slot: None,
                                 subslot: None,
-                                repo: dep.repo.clone(),
+                                repo: dep.repo,
                                 use_constraints: use_constraints.clone(),
                                 inverted: false,
                             };
@@ -970,7 +949,7 @@ impl PortageDependencyProvider {
                         version,
                         slot: None,
                         subslot: None,
-                        repo: dep.repo.clone(),
+                        repo: dep.repo,
                         use_constraints,
                         inverted: false,
                     };
@@ -1009,16 +988,12 @@ impl PortageDependencyProvider {
         self.rebuild_triggers.contains(&vs_id)
     }
 
-    /// Look up the on-[`ConditionId`](resolvo::ConditionId) for a
-    /// solver-decided USE flag (true when the flag is enabled).
-    pub fn flag_condition(&self, flag: &str) -> Option<ConditionId> {
-        self.flag_virtuals.get(flag).map(|fv| fv.on_condition)
+    pub fn flag_condition(&self, flag: Interned<DefaultInterner>) -> Option<ConditionId> {
+        self.flag_virtuals.get(&flag).map(|fv| fv.on_condition)
     }
 
-    /// Look up the off-[`ConditionId`](resolvo::ConditionId) for a
-    /// solver-decided USE flag (true when the flag is disabled).
-    pub fn flag_off_condition(&self, flag: &str) -> Option<ConditionId> {
-        self.flag_virtuals.get(flag).map(|fv| fv.off_condition)
+    pub fn flag_off_condition(&self, flag: Interned<DefaultInterner>) -> Option<ConditionId> {
+        self.flag_virtuals.get(&flag).map(|fv| fv.off_condition)
     }
 
     /// Build a labeled dependency graph from a solver solution.
@@ -1351,11 +1326,7 @@ impl resolvo::DependencyProvider for PortageDependencyProvider {
                     matches = !matches;
                 }
 
-                if inverse {
-                    !matches
-                } else {
-                    matches
-                }
+                if inverse { !matches } else { matches }
             })
             .collect()
     }
@@ -1378,18 +1349,19 @@ impl resolvo::DependencyProvider for PortageDependencyProvider {
 /// Returns `(slot, subslot)`. `:*` and `:=` return `(None, None)`,
 /// which makes `slot_matches` accept all candidates regardless of
 /// their slot.
-fn extract_slot(dep: &Dep) -> (Option<String>, Option<String>) {
+fn extract_slot(
+    dep: &Dep,
+) -> (
+    Option<Interned<DefaultInterner>>,
+    Option<Interned<DefaultInterner>>,
+) {
     match &dep.slot_dep {
-        // :3.12, :0=, :0/1.2  — named slot, optionally with operator/subslot
         Some(SlotDep::Slot {
             slot: Some(s),
             op: _,
-        }) => (Some(s.slot.clone()), s.subslot.clone()),
-        // :* — accept any slot
+        }) => (Some(s.slot), s.subslot),
         Some(SlotDep::Operator(SlotOperator::Star)) => (None, None),
-        // := — accept any slot (rebuild trigger tracked separately)
         Some(SlotDep::Operator(SlotOperator::Equal)) => (None, None),
-        // No slot dep at all
         _ => (None, None),
     }
 }
@@ -1506,13 +1478,7 @@ fn dep_matches_solvable(dep: &Dep, meta: &PackageMetadata, use_config: &UseConfi
     true
 }
 
-/// Resolve USE dep constraints on an atom into `(flag, must_be_enabled)` pairs.
-///
-/// Conditional variants (`flag?`, `!flag?`, `flag=`, `!flag=`) are resolved
-/// eagerly against the provided USE config. Constraints that are
-/// unconditionally inactive (e.g. `flag?` when the parent's flag is off)
-/// are omitted.
-fn resolve_use_deps(dep: &Dep, use_config: &UseConfig) -> Vec<(String, bool)> {
+fn resolve_use_deps(dep: &Dep, use_config: &UseConfig) -> Vec<(Interned<DefaultInterner>, bool)> {
     let Some(use_deps) = &dep.use_deps else {
         return Vec::new();
     };
@@ -1520,27 +1486,23 @@ fn resolve_use_deps(dep: &Dep, use_config: &UseConfig) -> Vec<(String, bool)> {
     for ud in use_deps {
         let parent_flag_on = use_config.enabled.contains(&ud.flag);
         match ud.kind {
-            UseDepKind::Enabled => constraints.push((ud.flag.clone(), true)),
-            UseDepKind::Disabled => constraints.push((ud.flag.clone(), false)),
+            UseDepKind::Enabled => constraints.push((ud.flag, true)),
+            UseDepKind::Disabled => constraints.push((ud.flag, false)),
             UseDepKind::Conditional => {
-                // [flag?] — if parent has flag on, target must have it on
                 if parent_flag_on {
-                    constraints.push((ud.flag.clone(), true));
+                    constraints.push((ud.flag, true));
                 }
             }
             UseDepKind::ConditionalInverse => {
-                // [!flag?] — if parent has flag off, target must have it on
                 if !parent_flag_on {
-                    constraints.push((ud.flag.clone(), true));
+                    constraints.push((ud.flag, true));
                 }
             }
             UseDepKind::Equal => {
-                // [flag=] — target must match parent's state
-                constraints.push((ud.flag.clone(), parent_flag_on));
+                constraints.push((ud.flag, parent_flag_on));
             }
             UseDepKind::EqualInverse => {
-                // [!flag=] — target must be opposite of parent's state
-                constraints.push((ud.flag.clone(), !parent_flag_on));
+                constraints.push((ud.flag, !parent_flag_on));
             }
         }
     }
