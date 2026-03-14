@@ -1405,18 +1405,18 @@ fn bare_version(v: &Version) -> Version {
 
 /// Check whether a candidate's slot, sub-slot, and repository match the constraint.
 fn slot_matches(meta: &PackageMetadata, constraint: &VersionConstraint) -> bool {
-    if let Some(required_slot) = &constraint.slot {
-        if meta.slot.as_deref() != Some(required_slot.as_str()) {
+    if let Some(required_slot) = constraint.slot {
+        if meta.slot != Some(required_slot) {
             return false;
         }
     }
-    if let Some(required_subslot) = &constraint.subslot {
-        if meta.subslot.as_deref() != Some(required_subslot.as_str()) {
+    if let Some(required_subslot) = constraint.subslot {
+        if meta.subslot != Some(required_subslot) {
             return false;
         }
     }
-    if let Some(required_repo) = &constraint.repo {
-        if meta.repo.as_deref() != Some(required_repo.as_str()) {
+    if let Some(required_repo) = constraint.repo {
+        if meta.repo != Some(required_repo) {
             return false;
         }
     }
@@ -1448,20 +1448,20 @@ fn dep_matches_solvable(dep: &Dep, meta: &PackageMetadata, use_config: &UseConfi
 
     // Slot / sub-slot from the dep atom.
     let (slot, subslot) = extract_slot(dep);
-    if let Some(ref required_slot) = slot {
-        if meta.slot.as_deref() != Some(required_slot.as_str()) {
+    if let Some(required_slot) = slot {
+        if meta.slot != Some(required_slot) {
             return false;
         }
     }
-    if let Some(ref required_subslot) = subslot {
-        if meta.subslot.as_deref() != Some(required_subslot.as_str()) {
+    if let Some(required_subslot) = subslot {
+        if meta.subslot != Some(required_subslot) {
             return false;
         }
     }
 
     // Repository constraint.
-    if let Some(ref required_repo) = dep.repo {
-        if meta.repo.as_deref() != Some(required_repo.as_str()) {
+    if let Some(required_repo) = dep.repo {
+        if meta.repo != Some(required_repo) {
             return false;
         }
     }
