@@ -4,7 +4,7 @@ use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_mai
 use portage_atom::{Cpn, Cpv, Dep};
 use portage_atom_resolvo::{
     DepEntry, InMemoryRepository, PackageDeps, PackageMetadata, PortageDependencyProvider,
-    UseConfig, gentoo_interner,
+    UseConfig, interner,
 };
 use resolvo::{Problem, Solver};
 
@@ -116,7 +116,7 @@ fn bench_string_alloc(c: &mut Criterion) {
 fn pkg(cpv: &str, slot: &str, deps: Vec<DepEntry>) -> PackageMetadata {
     PackageMetadata {
         cpv: Cpv::parse(cpv).unwrap(),
-        slot: Some(gentoo_interner::Interned::intern(slot)),
+        slot: Some(interner::Interned::intern(slot)),
         subslot: None,
         iuse: vec![],
         use_flags: HashSet::new(),
@@ -183,7 +183,7 @@ fn build_realistic_repo() -> InMemoryRepository {
         DepEntry::Atom(Dep::parse(">=sys-libs/zlib-1.2.13").unwrap()),
         DepEntry::Atom(Dep::parse("app-arch/bzip2").unwrap()),
         DepEntry::UseConditional {
-            flag: gentoo_interner::Interned::intern("xml"),
+            flag: interner::Interned::intern("xml"),
             negate: false,
             children: vec![DepEntry::Atom(Dep::parse("dev-libs/expat").unwrap())],
         },
@@ -209,7 +209,7 @@ fn build_realistic_repo() -> InMemoryRepository {
                 DepEntry::Atom(Dep::parse("dev-libs/libressl").unwrap()),
             ]),
             DepEntry::UseConditional {
-                flag: gentoo_interner::Interned::intern("ssl"),
+                flag: interner::Interned::intern("ssl"),
                 negate: false,
                 children: vec![DepEntry::Atom(Dep::parse("dev-python/certifi").unwrap())],
             },
@@ -246,7 +246,7 @@ fn bench_provider_construction(c: &mut Criterion) {
     let use_config = UseConfig::from(
         ["ssl", "xml"]
             .iter()
-            .map(|s| gentoo_interner::Interned::intern(*s))
+            .map(|s| interner::Interned::intern(*s))
             .collect::<HashSet<_>>(),
     );
 
@@ -262,7 +262,7 @@ fn bench_solve_resolution(c: &mut Criterion) {
     let use_config = UseConfig::from(
         ["ssl", "xml"]
             .iter()
-            .map(|s| gentoo_interner::Interned::intern(*s))
+            .map(|s| interner::Interned::intern(*s))
             .collect::<HashSet<_>>(),
     );
 
@@ -290,7 +290,7 @@ fn bench_solve_resolution_isolated(c: &mut Criterion) {
     let use_config = UseConfig::from(
         ["ssl", "xml"]
             .iter()
-            .map(|s| gentoo_interner::Interned::intern(*s))
+            .map(|s| interner::Interned::intern(*s))
             .collect::<HashSet<_>>(),
     );
 

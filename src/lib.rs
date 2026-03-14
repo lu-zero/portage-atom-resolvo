@@ -14,7 +14,7 @@ pub use pool::{
     PortagePool, UseConfig, VersionConstraint,
 };
 pub use portage_atom::DepEntry;
-pub use portage_atom::gentoo_interner;
+pub use portage_atom::gentoo_interner as interner;
 pub use provider::PortageDependencyProvider;
 pub use repository::{InMemoryRepository, PackageRepository};
 pub use version_match::version_matches;
@@ -23,7 +23,7 @@ pub use version_match::version_matches;
 mod tests {
     use std::collections::HashSet;
 
-    use crate::gentoo_interner::Interned;
+    use crate::interner::Interned;
     use portage_atom::{Blocker, Cpv, Dep};
     use resolvo::{ArenaId, Problem, Solver, VersionSetId};
 
