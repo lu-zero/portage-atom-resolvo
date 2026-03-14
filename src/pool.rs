@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use portage_atom::gentoo_interner::{DefaultInterner, Interned};
 use portage_atom::{Cpn, Cpv, DepEntry, Operator, Version};
 use resolvo::{
     ArenaId, ConditionId, NameId, SolvableId, StringId, VersionSetId, VersionSetUnionId,
@@ -44,19 +45,13 @@ pub struct DepEdge {
 ///   (conservative: resolvo conditions have no NOT operator).
 #[derive(Debug, Clone, Default)]
 pub struct UseConfig {
-    /// Flags that are always enabled.
-    pub enabled: HashSet<String>,
-    /// Flags that are always disabled.
-    pub disabled: HashSet<String>,
-    /// Flags the solver may toggle via virtual solvables.
-    pub solver_decided: HashSet<String>,
+    pub enabled: HashSet<Interned<DefaultInterner>>,
+    pub disabled: HashSet<Interned<DefaultInterner>>,
+    pub solver_decided: HashSet<Interned<DefaultInterner>>,
 }
 
-impl From<HashSet<String>> for UseConfig {
-    /// Convert a set of enabled flags into a [`UseConfig`] (backward
-    /// compatible with the old `&HashSet<String>` API — unlisted flags
-    /// are implicitly disabled).
-    fn from(enabled: HashSet<String>) -> Self {
+impl From<HashSet<Interned<DefaultInterner>>> for UseConfig {
+    fn from(enabled: HashSet<Interned<DefaultInterner>>) -> Self {
         Self {
             enabled,
             disabled: HashSet::new(),
@@ -72,11 +67,8 @@ impl From<HashSet<String>> for UseConfig {
 /// as independent names by the solver.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PackageName {
-    /// The unversioned category/package name.
     pub cpn: Cpn,
-    /// Optional slot — when present, only candidates in this slot are
-    /// considered for the same [`NameId`].
-    pub slot: Option<String>,
+    pub slot: Option<Interned<DefaultInterner>>,
 }
 
 impl std::fmt::Display for PackageName {
@@ -89,22 +81,14 @@ impl std::fmt::Display for PackageName {
     }
 }
 
-/// Metadata for a concrete installable version (one [`SolvableId`]).
 #[derive(Debug, Clone)]
 pub struct PackageMetadata {
-    /// The fully-qualified category/package/version.
     pub cpv: Cpv,
-    /// The slot this version occupies.
-    pub slot: Option<String>,
-    /// Sub-slot for ABI tracking.
-    pub subslot: Option<String>,
-    /// Declared IUSE flags (names only, without +/- defaults).
-    pub iuse: Vec<String>,
-    /// Active USE flags for this version (the flags that are currently enabled).
-    pub use_flags: HashSet<String>,
-    /// Repository this version comes from (e.g. `"gentoo"`, `"guru"`).
-    pub repo: Option<String>,
-    /// Structured dependency trees, separated by class.
+    pub slot: Option<Interned<DefaultInterner>>,
+    pub subslot: Option<Interned<DefaultInterner>>,
+    pub iuse: Vec<Interned<DefaultInterner>>,
+    pub use_flags: HashSet<Interned<DefaultInterner>>,
+    pub repo: Option<Interned<DefaultInterner>>,
     pub dependencies: PackageDeps,
 }
 
@@ -199,29 +183,13 @@ impl std::fmt::Display for DepClass {
 /// evaluation logic.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VersionConstraint {
-    /// The category/package name the constraint applies to.
     pub cpn: Cpn,
-    /// The comparison operator.
     pub operator: Operator,
-    /// The version to compare against.
     pub version: Version,
-    /// Optional slot restriction.
-    pub slot: Option<String>,
-    /// Optional sub-slot restriction (e.g. `:0/1.2`).
-    pub subslot: Option<String>,
-    /// Optional repository restriction (e.g. `::gentoo`).
-    pub repo: Option<String>,
-    /// Resolved USE dep constraints from `[ssl,-debug]` syntax.
-    ///
-    /// Each entry is `(flag_name, must_be_enabled)`.  Conditional variants
-    /// (`flag?`, `!flag?`, `flag=`, `!flag=`) are resolved eagerly against
-    /// the parent package's USE configuration at dep-conversion time.
-    /// Sorted by flag name for canonical dedup.
-    pub use_constraints: Vec<(String, bool)>,
-    /// When `true`, the match result of `(operator, version)` is logically
-    /// negated inside [`filter_candidates`](crate::PortageDependencyProvider).
-    /// Used for blocker constrains so that resolvo forbids candidates that
-    /// *match* the blocker rather than those that don't.
+    pub slot: Option<Interned<DefaultInterner>>,
+    pub subslot: Option<Interned<DefaultInterner>>,
+    pub repo: Option<Interned<DefaultInterner>>,
+    pub use_constraints: Vec<(Interned<DefaultInterner>, bool)>,
     pub inverted: bool,
 }
 
@@ -506,11 +474,11 @@ mod tests {
         let mut pool = PortagePool::new();
         let a = pool.intern_name(PackageName {
             cpn: Cpn::new("dev-lang", "python"),
-            slot: Some("3.11".into()),
+            slot: Some(Interned::intern("3.11")),
         });
         let b = pool.intern_name(PackageName {
             cpn: Cpn::new("dev-lang", "python"),
-            slot: Some("3.12".into()),
+            slot: Some(Interned::intern("3.12")),
         });
         assert_ne!(a, b);
     }
@@ -524,7 +492,7 @@ mod tests {
         });
         let meta = PackageMetadata {
             cpv: Cpv::parse("dev-lang/rust-1.75.0").unwrap(),
-            slot: Some("0".into()),
+            slot: Some(Interned::intern("0")),
             subslot: None,
             iuse: vec![],
             use_flags: HashSet::new(),
