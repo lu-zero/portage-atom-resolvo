@@ -407,6 +407,9 @@ impl PortageDependencyProvider {
                 DepEntry::AtMostOneOf(alternatives) => {
                     Self::convert_one_of_group(alternatives, true, ctx, requirements, constrains);
                 }
+                DepEntry::AllOf(children) => {
+                    Self::convert_deps(children, ctx, requirements, constrains);
+                }
             }
         }
     }
@@ -842,6 +845,53 @@ impl PortageDependencyProvider {
                 DepEntry::AtMostOneOf(nested) => {
                     Self::convert_one_of_group(nested, true, ctx, requirements, constrains);
                 }
+                DepEntry::AllOf(children) => {
+                    let allof_id = *ctx.xof_counter;
+                    *ctx.xof_counter += 1;
+
+                    let cpn = Cpn::new("virtual", format!("allof_{allof_id}"));
+                    let pkg_name = PackageName { cpn, slot: None };
+                    let name_id = ctx.pool.intern_name(pkg_name);
+                    ctx.cpn_slots.entry(cpn).or_default().push(name_id);
+
+                    let meta = PackageMetadata {
+                        cpv: Cpv::parse(&format!("virtual/allof_{allof_id}-1.0")).unwrap(),
+                        slot: None,
+                        subslot: None,
+                        iuse: vec![],
+                        use_flags: HashSet::new(),
+                        repo: None,
+                        dependencies: PackageDeps::default(),
+                    };
+                    let sid = ctx.pool.intern_solvable(name_id, meta);
+                    ctx.candidates.entry(name_id).or_default().push(sid);
+
+                    let constraint = VersionConstraint {
+                        cpn,
+                        operator: Operator::GreaterOrEqual,
+                        version: Version::parse("0").unwrap(),
+                        slot: None,
+                        subslot: None,
+                        repo: None,
+                        use_constraints: vec![],
+                        inverted: false,
+                    };
+                    let vs_id = ctx.pool.intern_version_set(name_id, constraint);
+
+                    let mut child_reqs = Vec::new();
+                    let mut child_constrains = Vec::new();
+                    Self::convert_deps(children, ctx, &mut child_reqs, &mut child_constrains);
+
+                    ctx.dep_map.insert(
+                        sid,
+                        KnownDependencies {
+                            requirements: child_reqs,
+                            constrains: child_constrains,
+                        },
+                    );
+
+                    vs_ids.push(vs_id);
+                }
             }
         }
 
@@ -1055,10 +1105,8 @@ impl PortageDependencyProvider {
                 }
                 DepEntry::AnyOf(alternatives)
                 | DepEntry::ExactlyOneOf(alternatives)
-                | DepEntry::AtMostOneOf(alternatives) => {
-                    // For any-of / exactly-one-of / at-most-one-of groups,
-                    // emit edges for whichever alternatives actually matched
-                    // something in the solution.
+                | DepEntry::AtMostOneOf(alternatives)
+                | DepEntry::AllOf(alternatives) => {
                     self.collect_dep_edges(from, class, alternatives, solution, edges);
                 }
             }
@@ -1400,6 +1448,7 @@ fn bare_version(v: &Version) -> Version {
         suffixes: v.suffixes.clone(),
         revision: v.revision.clone(),
         glob: v.glob,
+        raw: None,
     }
 }
 
@@ -1506,6 +1555,7 @@ fn resolve_use_deps(dep: &Dep, use_config: &UseConfig) -> Vec<(Interned<DefaultI
             }
         }
     }
+    #[allow(clippy::unnecessary_sort_by)]
     constraints.sort_by(|a, b| a.0.cmp(&b.0));
     constraints
 }

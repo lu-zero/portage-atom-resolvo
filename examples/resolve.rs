@@ -166,6 +166,31 @@ fn build_repo() -> InMemoryRepository {
         ],
     ));
 
+    // -- dev-python/sphinx: documentation builder, needs python --
+    repo.add(pkg(
+        "dev-python/sphinx-7.0.0",
+        "0",
+        vec![DepEntry::Atom(Dep::parse("dev-lang/python:*").unwrap())],
+    ));
+
+    // -- app-doc/pygDoc: uses python_gen_any_dep pattern --
+    //   || ( ( python:3.12 sphinx ) ( python:3.11 sphinx ) )
+    //   Both packages in a group must be installed together.
+    repo.add(pkg(
+        "app-doc/pygdoc-1.0",
+        "0",
+        vec![DepEntry::AnyOf(vec![
+            DepEntry::AllOf(vec![
+                DepEntry::Atom(Dep::parse("dev-lang/python:3.12").unwrap()),
+                DepEntry::Atom(Dep::parse("dev-python/sphinx").unwrap()),
+            ]),
+            DepEntry::AllOf(vec![
+                DepEntry::Atom(Dep::parse("dev-lang/python:3.11").unwrap()),
+                DepEntry::Atom(Dep::parse("dev-python/sphinx").unwrap()),
+            ]),
+        ])],
+    ));
+
     repo
 }
 
@@ -200,6 +225,11 @@ fn print_deps(indent: usize, entries: &[DepEntry]) {
                 print_deps(indent + 4, children);
                 println!("{pad})");
             }
+            DepEntry::AllOf(children) => {
+                println!("{pad}(");
+                print_deps(indent + 4, children);
+                println!("{pad})");
+            }
         }
     }
 }
@@ -212,6 +242,7 @@ fn solve_and_print(repo: &InMemoryRepository, use_config: &UseConfig) {
         "net-misc/curl",
         "app-portage/gentoolkit",
         "www-client/firefox",
+        "app-doc/pygdoc",
     ];
     let reqs: Vec<_> = root_atoms
         .iter()
@@ -303,6 +334,8 @@ fn main() {
     println!("  net-misc/curl          8.7.1                   :0");
     println!("  app-portage/gentoolkit 0.6.3                   :0");
     println!("  www-client/firefox     125.0.3                 :0");
+    println!("  dev-python/sphinx      7.0.0                   :0");
+    println!("  app-doc/pygdoc         1.0                     :0");
 
     // ── Show declared dependencies ──────────────────────────────────
     println!("\nDeclared dependencies:\n");
@@ -375,6 +408,19 @@ fn main() {
                 DepEntry::Atom(Dep::parse(">=dev-libs/openssl-3.2.0:0=").unwrap()),
             ],
         ),
+        (
+            "app-doc/pygdoc-1.0",
+            vec![DepEntry::AnyOf(vec![
+                DepEntry::AllOf(vec![
+                    DepEntry::Atom(Dep::parse("dev-lang/python:3.12").unwrap()),
+                    DepEntry::Atom(Dep::parse("dev-python/sphinx").unwrap()),
+                ]),
+                DepEntry::AllOf(vec![
+                    DepEntry::Atom(Dep::parse("dev-lang/python:3.11").unwrap()),
+                    DepEntry::Atom(Dep::parse("dev-python/sphinx").unwrap()),
+                ]),
+            ])],
+        ),
     ];
 
     for (name, deps) in &pkgs_with_deps {
@@ -387,6 +433,7 @@ fn main() {
     println!("  net-misc/curl");
     println!("  app-portage/gentoolkit");
     println!("  www-client/firefox");
+    println!("  app-doc/pygdoc");
 
     // ── Solve with USE="ssl xml" ────────────────────────────────────
     let flags_on = UseConfig::from(

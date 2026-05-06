@@ -1724,4 +1724,58 @@ mod tests {
         assert!(cpvs.contains("app-misc/foo-1.0"));
         assert!(cpvs.contains("dev-lib/bar-1.0"));
     }
+
+    #[test]
+    fn solve_any_of_with_all_of_groups() {
+        let mut repo = InMemoryRepository::new();
+
+        // Models the python_gen_any_dep pattern:
+        // || ( ( dev-lang/python:3.14 dev-python/sphinx ) ( dev-lang/python:3.13 dev-python/sphinx ) )
+        // The solver must pick one group: both python AND sphinx from the same group.
+        repo.add(pkg(
+            "app-misc/foo-1.0",
+            "0",
+            vec![DepEntry::AnyOf(vec![
+                DepEntry::AllOf(vec![
+                    DepEntry::Atom(Dep::parse("dev-lang/python:3.14").unwrap()),
+                    DepEntry::Atom(Dep::parse("dev-python/sphinx").unwrap()),
+                ]),
+                DepEntry::AllOf(vec![
+                    DepEntry::Atom(Dep::parse("dev-lang/python:3.13").unwrap()),
+                    DepEntry::Atom(Dep::parse("dev-python/sphinx").unwrap()),
+                ]),
+            ])],
+        ));
+        repo.add(pkg("dev-lang/python-3.13.0", "3.13", vec![]));
+        repo.add(pkg("dev-lang/python-3.14.0", "3.14", vec![]));
+        repo.add(pkg("dev-python/sphinx-7.0.0", "0", vec![]));
+
+        let mut provider = PortageDependencyProvider::new(&repo, &UseConfig::default());
+        let req = provider.intern_requirement(&Dep::parse("app-misc/foo").unwrap());
+        let problem = Problem::new().requirements(vec![req]);
+
+        let mut solver = Solver::new(provider);
+        let solution = solver.solve(problem).unwrap();
+
+        let cpvs: HashSet<String> = solution
+            .iter()
+            .map(|&sid| solver.provider().package_metadata(sid).cpv.to_string())
+            .collect();
+
+        // foo + virtual/allof choice + exactly one python slot + sphinx = 4
+        assert!(cpvs.contains("app-misc/foo-1.0"));
+        assert!(cpvs.contains("dev-python/sphinx-7.0.0"));
+        // Exactly one python slot, not both
+        assert!(cpvs.contains("dev-lang/python-3.14.0") || cpvs.contains("dev-lang/python-3.13.0"));
+        assert!(
+            !(cpvs.contains("dev-lang/python-3.14.0") && cpvs.contains("dev-lang/python-3.13.0"))
+        );
+        // Both members of the chosen group must be present
+        if cpvs.contains("dev-lang/python-3.14.0") {
+            assert!(cpvs.contains("dev-python/sphinx-7.0.0"));
+        }
+        if cpvs.contains("dev-lang/python-3.13.0") {
+            assert!(cpvs.contains("dev-python/sphinx-7.0.0"));
+        }
+    }
 }
