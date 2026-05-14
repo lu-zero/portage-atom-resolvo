@@ -186,6 +186,7 @@ pub struct VersionConstraint {
     pub cpn: Cpn,
     pub operator: Operator,
     pub version: Version,
+    pub glob: bool,
     pub slot: Option<Interned<DefaultInterner>>,
     pub subslot: Option<Interned<DefaultInterner>>,
     pub repo: Option<Interned<DefaultInterner>>,
@@ -199,6 +200,9 @@ impl std::fmt::Display for VersionConstraint {
             write!(f, "!")?;
         }
         write!(f, "{}{}-{}", self.operator, self.cpn, self.version)?;
+        if self.glob {
+            write!(f, "*")?;
+        }
         if let Some(slot) = &self.slot {
             write!(f, ":{}", slot)?;
             if let Some(subslot) = &self.subslot {
@@ -518,6 +522,7 @@ mod tests {
             cpn: Cpn::new("dev-lang", "rust"),
             operator: Operator::GreaterOrEqual,
             version: Version::parse("1.75.0").unwrap(),
+            glob: false,
             slot: None,
             subslot: None,
             repo: None,

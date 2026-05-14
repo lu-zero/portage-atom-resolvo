@@ -228,6 +228,7 @@ impl PortageDependencyProvider {
                 cpn: on_cpn,
                 operator: Operator::GreaterOrEqual,
                 version: version_zero.clone(),
+                glob: false,
                 slot: None,
                 subslot: None,
                 repo: None,
@@ -262,6 +263,7 @@ impl PortageDependencyProvider {
                 cpn: off_cpn,
                 operator: Operator::GreaterOrEqual,
                 version: version_zero.clone(),
+                glob: false,
                 slot: None,
                 subslot: None,
                 repo: None,
@@ -480,6 +482,7 @@ impl PortageDependencyProvider {
                 cpn,
                 operator: Operator::GreaterOrEqual,
                 version: version_zero.clone(),
+                glob: false,
                 slot: None,
                 subslot: None,
                 repo: None,
@@ -514,6 +517,7 @@ impl PortageDependencyProvider {
                 cpn,
                 operator: Operator::GreaterOrEqual,
                 version: version_zero.clone(),
+                glob: false,
                 slot: None,
                 subslot: None,
                 repo: None,
@@ -615,6 +619,7 @@ impl PortageDependencyProvider {
                 cpn: dep.cpn,
                 operator: op,
                 version,
+                glob: dep.glob,
                 slot: Some(*slot_val),
                 subslot,
                 repo,
@@ -643,6 +648,7 @@ impl PortageDependencyProvider {
                         cpn: dep.cpn,
                         operator: op,
                         version,
+                        glob: dep.glob,
                         slot: None,
                         subslot: None,
                         repo,
@@ -669,6 +675,7 @@ impl PortageDependencyProvider {
                                 cpn: dep.cpn,
                                 operator: op,
                                 version: version.clone(),
+                                glob: dep.glob,
                                 slot: None,
                                 subslot: None,
                                 repo,
@@ -712,6 +719,7 @@ impl PortageDependencyProvider {
                         cpn: dep.cpn,
                         operator: op,
                         version,
+                        glob: dep.glob,
                         slot: None,
                         subslot: None,
                         repo,
@@ -765,6 +773,7 @@ impl PortageDependencyProvider {
                             cpn: dep.cpn,
                             operator: op,
                             version,
+                            glob: dep.glob,
                             slot: Some(*slot_val),
                             subslot,
                             repo: dep.repo,
@@ -780,6 +789,7 @@ impl PortageDependencyProvider {
                                     cpn: dep.cpn,
                                     operator: op,
                                     version: version.clone(),
+                                    glob: dep.glob,
                                     slot: None,
                                     subslot: None,
                                     repo: dep.repo,
@@ -798,6 +808,7 @@ impl PortageDependencyProvider {
                                 cpn: dep.cpn,
                                 operator: op,
                                 version,
+                                glob: dep.glob,
                                 slot: None,
                                 subslot: None,
                                 repo: dep.repo,
@@ -870,6 +881,7 @@ impl PortageDependencyProvider {
                         cpn,
                         operator: Operator::GreaterOrEqual,
                         version: Version::parse("0").unwrap(),
+                        glob: false,
                         slot: None,
                         subslot: None,
                         repo: None,
@@ -930,6 +942,7 @@ impl PortageDependencyProvider {
                 cpn: dep.cpn,
                 operator: op,
                 version,
+                glob: dep.glob,
                 slot: Some(*slot_val),
                 subslot,
                 repo: dep.repo,
@@ -952,6 +965,7 @@ impl PortageDependencyProvider {
                         cpn: dep.cpn,
                         operator: op,
                         version,
+                        glob: dep.glob,
                         slot: None,
                         subslot: None,
                         repo: dep.repo,
@@ -972,6 +986,7 @@ impl PortageDependencyProvider {
                                 cpn: dep.cpn,
                                 operator: op,
                                 version: version.clone(),
+                                glob: dep.glob,
                                 slot: None,
                                 subslot: None,
                                 repo: dep.repo,
@@ -997,6 +1012,7 @@ impl PortageDependencyProvider {
                         cpn: dep.cpn,
                         operator: op,
                         version,
+                        glob: dep.glob,
                         slot: None,
                         subslot: None,
                         repo: dep.repo,
@@ -1361,9 +1377,12 @@ impl resolvo::DependencyProvider for PortageDependencyProvider {
             .copied()
             .filter(|&sid| {
                 let meta = self.pool.resolve_solvable(sid);
-                let mut matches =
-                    version_matches(&meta.cpv.version, &constraint.operator, &constraint.version)
-                        && slot_matches(meta, constraint);
+                let mut matches = version_matches(
+                    &meta.cpv.version,
+                    &constraint.operator,
+                    constraint.glob,
+                    &constraint.version,
+                ) && slot_matches(meta, constraint);
 
                 // Blocker constrains store the *blocked* operator with
                 // `inverted = true`.  Flipping the match here means resolvo's
@@ -1432,23 +1451,10 @@ fn has_slot_equal_op(dep: &Dep) -> bool {
 fn dep_op_version(dep: &Dep) -> (Operator, Version) {
     match &dep.version {
         Some(v) => {
-            let op = v.op.unwrap_or(Operator::Equal);
-            (op, bare_version(v))
+            let op = dep.op.unwrap_or(Operator::Equal);
+            (op, v.clone())
         }
         None => (Operator::GreaterOrEqual, Version::parse("0").unwrap()),
-    }
-}
-
-/// Strip the operator from a version (the pool stores bare versions).
-fn bare_version(v: &Version) -> Version {
-    Version {
-        op: None,
-        numbers: v.numbers.clone(),
-        letter: v.letter,
-        suffixes: v.suffixes.clone(),
-        revision: v.revision.clone(),
-        glob: v.glob,
-        raw: None,
     }
 }
 
@@ -1491,7 +1497,7 @@ fn dep_matches_solvable(dep: &Dep, meta: &PackageMetadata, use_config: &UseConfi
 
     // Version constraint (if any).
     let (op, constraint_version) = dep_op_version(dep);
-    if !version_matches(&meta.cpv.version, &op, &constraint_version) {
+    if !version_matches(&meta.cpv.version, &op, dep.glob, &constraint_version) {
         return false;
     }
 

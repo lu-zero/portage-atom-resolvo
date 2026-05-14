@@ -4,8 +4,6 @@
 //! given a candidate version, an operator, and a constraint version, determine
 //! whether the candidate satisfies the constraint.
 
-use std::cmp::Ordering;
-
 use portage_atom::{Operator, Version};
 
 /// Test whether `candidate` satisfies the version constraint `op constraint`.
@@ -22,21 +20,24 @@ use portage_atom::{Operator, Version};
 /// | `~`  | candidate has the same base version, ignoring revision |
 ///
 /// When `constraint.glob` is `true` (i.e. the `=cat/pkg-1.2*` form), the `=`
-/// operator performs prefix matching via the [`Version`] ordering, which
-/// implements PMS 8.3.1 glob semantics.
+/// operator performs prefix matching via [`Version::glob_matches`].
 ///
 /// See [PMS 8.3.1](https://projects.gentoo.org/pms/9/pms.html#operators).
-pub fn version_matches(candidate: &Version, op: &Operator, constraint: &Version) -> bool {
+pub fn version_matches(
+    candidate: &Version,
+    op: &Operator,
+    glob: bool,
+    constraint: &Version,
+) -> bool {
     match op {
         Operator::Less => candidate < constraint,
         Operator::LessOrEqual => candidate <= constraint,
         Operator::Equal => {
-            // When the constraint carries a glob suffix (`=cat/pkg-1.2*`),
-            // Version::cmp handles prefix matching via glob_cmp.
-            // For non-glob `=`, Ord-based equality is equivalent to structural
-            // equality on the version components (numbers, letter, suffixes,
-            // revision).
-            candidate.cmp(constraint) == Ordering::Equal
+            if glob {
+                candidate.glob_matches(constraint)
+            } else {
+                candidate == constraint
+            }
         }
         Operator::GreaterOrEqual => candidate >= constraint,
         Operator::Greater => candidate > constraint,
@@ -55,17 +56,32 @@ mod tests {
     // --- Less ---
     #[test]
     fn less_matches() {
-        assert!(version_matches(&v("1.2.3"), &Operator::Less, &v("1.2.4")));
+        assert!(version_matches(
+            &v("1.2.3"),
+            &Operator::Less,
+            false,
+            &v("1.2.4")
+        ));
     }
 
     #[test]
     fn less_equal_does_not_match() {
-        assert!(!version_matches(&v("1.2.3"), &Operator::Less, &v("1.2.3")));
+        assert!(!version_matches(
+            &v("1.2.3"),
+            &Operator::Less,
+            false,
+            &v("1.2.3")
+        ));
     }
 
     #[test]
     fn less_greater_does_not_match() {
-        assert!(!version_matches(&v("1.2.4"), &Operator::Less, &v("1.2.3")));
+        assert!(!version_matches(
+            &v("1.2.4"),
+            &Operator::Less,
+            false,
+            &v("1.2.3")
+        ));
     }
 
     // --- LessOrEqual ---
@@ -74,6 +90,7 @@ mod tests {
         assert!(version_matches(
             &v("1.2.3"),
             &Operator::LessOrEqual,
+            false,
             &v("1.2.3")
         ));
     }
@@ -83,6 +100,7 @@ mod tests {
         assert!(version_matches(
             &v("1.2.2"),
             &Operator::LessOrEqual,
+            false,
             &v("1.2.3")
         ));
     }
@@ -92,6 +110,7 @@ mod tests {
         assert!(!version_matches(
             &v("1.2.4"),
             &Operator::LessOrEqual,
+            false,
             &v("1.2.3")
         ));
     }
@@ -99,7 +118,12 @@ mod tests {
     // --- Equal ---
     #[test]
     fn equal_matches() {
-        assert!(version_matches(&v("1.2.3"), &Operator::Equal, &v("1.2.3")));
+        assert!(version_matches(
+            &v("1.2.3"),
+            &Operator::Equal,
+            false,
+            &v("1.2.3")
+        ));
     }
 
     #[test]
@@ -107,6 +131,7 @@ mod tests {
         assert!(!version_matches(
             &v("1.2.3-r1"),
             &Operator::Equal,
+            false,
             &v("1.2.3")
         ));
     }
@@ -116,6 +141,7 @@ mod tests {
         assert!(version_matches(
             &v("1.2.3-r1"),
             &Operator::Equal,
+            false,
             &v("1.2.3-r1")
         ));
     }
@@ -126,6 +152,7 @@ mod tests {
         assert!(version_matches(
             &v("1.2.3"),
             &Operator::GreaterOrEqual,
+            false,
             &v("1.2.3")
         ));
     }
@@ -135,6 +162,7 @@ mod tests {
         assert!(version_matches(
             &v("1.2.4"),
             &Operator::GreaterOrEqual,
+            false,
             &v("1.2.3")
         ));
     }
@@ -144,6 +172,7 @@ mod tests {
         assert!(!version_matches(
             &v("1.2.2"),
             &Operator::GreaterOrEqual,
+            false,
             &v("1.2.3")
         ));
     }
@@ -154,6 +183,7 @@ mod tests {
         assert!(version_matches(
             &v("1.2.4"),
             &Operator::Greater,
+            false,
             &v("1.2.3")
         ));
     }
@@ -163,6 +193,7 @@ mod tests {
         assert!(!version_matches(
             &v("1.2.3"),
             &Operator::Greater,
+            false,
             &v("1.2.3")
         ));
     }
@@ -173,6 +204,7 @@ mod tests {
         assert!(version_matches(
             &v("1.2.3-r1"),
             &Operator::Approximate,
+            false,
             &v("1.2.3")
         ));
     }
@@ -182,6 +214,7 @@ mod tests {
         assert!(version_matches(
             &v("1.2.3"),
             &Operator::Approximate,
+            false,
             &v("1.2.3-r2")
         ));
     }
@@ -191,36 +224,41 @@ mod tests {
         assert!(!version_matches(
             &v("1.2.4"),
             &Operator::Approximate,
+            false,
             &v("1.2.3")
         ));
     }
 
     // --- Equal with glob (=*) ---
-    //
-    // In portage-atom 0.2, `=cat/pkg-1.75*` is represented as
-    // `Operator::Equal` with `Version { glob: true, .. }`.
-    // The glob semantics are handled by `Version::Ord::cmp` via `glob_cmp`.
-
-    /// Helper: build a glob version (as parsed from `=cat/pkg-VER*`).
-    fn vg(s: &str) -> Version {
-        let mut ver = Version::parse(s).unwrap();
-        ver.glob = true;
-        ver
-    }
 
     #[test]
     fn glob_matches_prefix() {
-        assert!(version_matches(&v("1.75.0"), &Operator::Equal, &vg("1.75")));
+        assert!(version_matches(
+            &v("1.75.0"),
+            &Operator::Equal,
+            true,
+            &v("1.75")
+        ));
     }
 
     #[test]
     fn glob_matches_exact() {
-        assert!(version_matches(&v("1.75"), &Operator::Equal, &vg("1.75")));
+        assert!(version_matches(
+            &v("1.75"),
+            &Operator::Equal,
+            true,
+            &v("1.75")
+        ));
     }
 
     #[test]
     fn glob_does_not_match_shorter() {
-        assert!(!version_matches(&v("1.7"), &Operator::Equal, &vg("1.75")));
+        assert!(!version_matches(
+            &v("1.7"),
+            &Operator::Equal,
+            true,
+            &v("1.75")
+        ));
     }
 
     #[test]
@@ -228,7 +266,8 @@ mod tests {
         assert!(!version_matches(
             &v("1.76.0"),
             &Operator::Equal,
-            &vg("1.75")
+            true,
+            &v("1.75")
         ));
     }
 
@@ -237,24 +276,24 @@ mod tests {
         assert!(version_matches(
             &v("1.2.3a"),
             &Operator::Equal,
-            &vg("1.2.3a")
+            true,
+            &v("1.2.3a")
         ));
         assert!(!version_matches(
             &v("1.2.3b"),
             &Operator::Equal,
-            &vg("1.2.3a")
+            true,
+            &v("1.2.3a")
         ));
     }
 
     #[test]
     fn glob_without_letter_matches_any_letter() {
-        // PMS 8.3.1: "only the given number of version components is used
-        // for comparison" — the letter is not a numeric component, so
-        // `=1.2.3*` matches `1.2.3a`.
         assert!(version_matches(
             &v("1.2.3a"),
             &Operator::Equal,
-            &vg("1.2.3")
+            true,
+            &v("1.2.3")
         ));
     }
 
@@ -264,6 +303,7 @@ mod tests {
         assert!(version_matches(
             &v("1.2.3_rc1"),
             &Operator::Less,
+            false,
             &v("1.2.3")
         ));
     }
@@ -273,6 +313,7 @@ mod tests {
         assert!(version_matches(
             &v("1.2.3_p1"),
             &Operator::Greater,
+            false,
             &v("1.2.3")
         ));
     }
