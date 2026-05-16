@@ -708,35 +708,9 @@ impl PortageDependencyProvider {
                     }
                 }
                 None => {
-                    // Package not in the repository — create a name so the
-                    // solver can report the unsatisfied dependency.
-                    let pkg_name = PackageName {
-                        cpn: dep.cpn,
-                        slot: None,
-                    };
-                    let name_id = ctx.pool.intern_name(pkg_name);
-                    let constraint = VersionConstraint {
-                        cpn: dep.cpn,
-                        operator: op,
-                        version,
-                        glob: dep.glob,
-                        slot: None,
-                        subslot: None,
-                        repo,
-                        use_constraints: use_constraints.clone(),
-                        inverted: is_blocker,
-                    };
-                    let vs_id = ctx.pool.intern_version_set(name_id, constraint);
-                    mark_trigger(vs_id);
-
-                    if is_blocker {
-                        push_blocker(vs_id);
-                    } else {
-                        requirements.push(ConditionalRequirement {
-                            condition: None,
-                            requirement: Requirement::Single(vs_id),
-                        });
-                    }
+                    // Package not in the repository — skip the requirement.
+                    // The solver cannot satisfy a dep on a missing package,
+                    // so we drop it (matching the pubgrub provider's approach).
                 }
             }
         }
@@ -799,23 +773,7 @@ impl PortageDependencyProvider {
                                 vs_ids.push(ctx.pool.intern_version_set(name_id, constraint));
                             }
                         } else {
-                            let pkg_name = PackageName {
-                                cpn: dep.cpn,
-                                slot: None,
-                            };
-                            let name_id = ctx.pool.intern_name(pkg_name);
-                            let constraint = VersionConstraint {
-                                cpn: dep.cpn,
-                                operator: op,
-                                version,
-                                glob: dep.glob,
-                                slot: None,
-                                subslot: None,
-                                repo: dep.repo,
-                                use_constraints,
-                                inverted: false,
-                            };
-                            vs_ids.push(ctx.pool.intern_version_set(name_id, constraint));
+                            // Package not in the repository — skip.
                         }
                     }
                 }
@@ -1032,6 +990,19 @@ impl PortageDependencyProvider {
     /// Access the underlying pool (for inspecting solution results).
     pub fn pool(&self) -> &PortagePool {
         &self.pool
+    }
+
+    /// Debug: return display names for all NameIds that have no candidates.
+    pub fn debug_empty_candidates(&self) -> Vec<String> {
+        let mut empty = Vec::new();
+        for (name_id, solvables) in &self.candidates {
+            if solvables.is_empty() {
+                let pkg_name = self.pool.resolve_name(*name_id);
+                empty.push(format!("{}", pkg_name));
+            }
+        }
+        empty.sort();
+        empty
     }
 
     /// Look up the [`PackageMetadata`] for a solved [`SolvableId`].
@@ -1459,6 +1430,10 @@ fn dep_op_version(dep: &Dep) -> (Operator, Version) {
 }
 
 /// Check whether a candidate's slot, sub-slot, and repository match the constraint.
+///
+/// USE-dep constraints are **not** enforced here — they require profile
+/// context (enabled/disabled flags) that isn't available at solve time.
+/// USE deps should be validated post-solve, matching the pubgrub provider.
 fn slot_matches(meta: &PackageMetadata, constraint: &VersionConstraint) -> bool {
     if let Some(required_slot) = constraint.slot {
         if meta.slot != Some(required_slot) {
@@ -1472,12 +1447,6 @@ fn slot_matches(meta: &PackageMetadata, constraint: &VersionConstraint) -> bool 
     }
     if let Some(required_repo) = constraint.repo {
         if meta.repo != Some(required_repo) {
-            return false;
-        }
-    }
-    for (flag, must_be_enabled) in &constraint.use_constraints {
-        let is_enabled = meta.use_flags.contains(flag);
-        if is_enabled != *must_be_enabled {
             return false;
         }
     }

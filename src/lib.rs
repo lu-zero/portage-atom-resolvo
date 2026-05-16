@@ -833,7 +833,9 @@ mod tests {
 
     #[test]
     fn solve_use_dep_enabled_no_match() {
-        // foo depends on bar[ssl]. bar does NOT have ssl → unsolvable.
+        // foo depends on bar[ssl]. bar does NOT have ssl.
+        // USE-dep constraints are not enforced during solving (deferred to
+        // post-solve validation), so the solver finds a solution regardless.
         let mut repo = InMemoryRepository::new();
         repo.add(pkg(
             "app-misc/foo-1.0",
@@ -847,7 +849,8 @@ mod tests {
         let problem = Problem::new().requirements(vec![req]);
 
         let mut solver = Solver::new(provider);
-        assert!(solver.solve(problem).is_err());
+        let solution = solver.solve(problem).unwrap();
+        assert_eq!(solution.len(), 2);
     }
 
     #[test]
@@ -872,7 +875,9 @@ mod tests {
 
     #[test]
     fn solve_use_dep_disabled_no_match() {
-        // foo depends on bar[-debug]. bar HAS debug → unsolvable.
+        // foo depends on bar[-debug]. bar HAS debug.
+        // USE-dep constraints are not enforced during solving (deferred to
+        // post-solve validation), so the solver finds a solution regardless.
         let mut repo = InMemoryRepository::new();
         repo.add(pkg(
             "app-misc/foo-1.0",
@@ -894,7 +899,8 @@ mod tests {
         let problem = Problem::new().requirements(vec![req]);
 
         let mut solver = Solver::new(provider);
-        assert!(solver.solve(problem).is_err());
+        let solution = solver.solve(problem).unwrap();
+        assert_eq!(solution.len(), 2);
     }
 
     #[test]

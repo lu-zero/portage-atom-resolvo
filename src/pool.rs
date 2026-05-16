@@ -246,7 +246,7 @@ pub struct PortagePool {
     // VersionSetId arena
     pub(crate) version_sets: Vec<VersionConstraint>,
     pub(crate) version_set_names: Vec<NameId>,
-    pub(crate) version_sets_rev: HashMap<VersionConstraint, VersionSetId>,
+    pub(crate) version_sets_rev: HashMap<(NameId, VersionConstraint), VersionSetId>,
 
     // VersionSetUnionId arena
     pub(crate) version_set_unions: Vec<Vec<VersionSetId>>,
@@ -321,11 +321,12 @@ impl PortagePool {
         name_id: NameId,
         constraint: VersionConstraint,
     ) -> VersionSetId {
-        if let Some(&id) = self.version_sets_rev.get(&constraint) {
+        let key = (name_id, constraint.clone());
+        if let Some(&id) = self.version_sets_rev.get(&key) {
             return id;
         }
         let id = VersionSetId::from_usize(self.version_sets.len());
-        self.version_sets_rev.insert(constraint.clone(), id);
+        self.version_sets_rev.insert(key, id);
         self.version_sets.push(constraint);
         self.version_set_names.push(name_id);
         id
